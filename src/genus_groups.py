@@ -1,5 +1,5 @@
 """
-Genus Groups module for UVAFME vegetation model.
+Genus Groups module for GAPpy vegetation model.
 
 This module handles grouping of species by genus and manages
 species/genus lists and their unique identifiers.

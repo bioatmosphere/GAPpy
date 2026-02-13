@@ -2,10 +2,10 @@
 CSV file utilities for writing structured data.
 
 This module provides functionality for writing CSV files in a format
-compatible with the original Fortran UVAFME model.
+compatible with the original Fortran UVAFME model output format.
 
 Original Fortran module written by Arjen Markus.
-Translated to Python for the GoG/UVAFME vegetation model.
+Translated to Python for GAPpy.
 """
 
 import csv

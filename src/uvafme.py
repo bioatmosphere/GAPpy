@@ -1,5 +1,5 @@
 """
-UVAFME (UVA Forest Model Enhanced) main module.
+GAPpy (Gap Model - Python) main module.
 Translated from UVAFME.f90
 """
 
@@ -21,8 +21,8 @@ from .sitelist import initialize_sitelist
 from .climate import set_site_climate
 
 
-class UVAFMEModel:
-    """Main UVAFME model class."""
+class GAPpyModel:
+    """Main GAPpy model class."""
     
     def __init__(self):
         self.sites = []
@@ -142,10 +142,7 @@ class UVAFMEModel:
     def draw_banner(self, numsites, species_present):
         """Draw the startup banner."""
         print("=" * 80)
-        print("                       UVA Forest Model Enhanced")
-        print("               Center For Regional Environmental Studies")
-        print("                        University of Virginia")
-        print("                   Department of Environmental Sciences")
+        print("                     GAPpy - Gap Model in Python")
         print("=" * 80)
         print()
         print("Running with parameters:")
@@ -330,8 +327,8 @@ class UVAFMEModel:
 
 
 def main():
-    """Main entry point for UVAFME model."""
-    model = UVAFMEModel()
+    """Main entry point for GAPpy model."""
+    model = GAPpyModel()
     model.run()
 
 

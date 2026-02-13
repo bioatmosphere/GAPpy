@@ -1,5 +1,5 @@
 """
-Soil module for UVAFME vegetation model.
+Soil module for GAPpy vegetation model.
 Translated from Soil.f90
 """
 

@@ -1,5 +1,5 @@
 """
-Site module for UVAFME vegetation model.
+Site module for GAPpy vegetation model.
 Translated from Site.f90
 """
 

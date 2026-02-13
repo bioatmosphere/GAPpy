@@ -1,5 +1,5 @@
 """
-Utility functions for UVAFME vegetation model.
+Utility functions for GAPpy vegetation model.
 Translated from Utilities.f90
 """
 

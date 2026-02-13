@@ -1,5 +1,5 @@
 """
-Tree module for UVAFME vegetation model.
+Tree module for GAPpy vegetation model.
 Translated from Tree.f90
 """
 

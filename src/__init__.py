@@ -1,5 +1,5 @@
 """
-UVAFME Vegetation Model - Python Translation
+GAPpy - Gap Model in Python
 """
 
 from .constants import *
@@ -11,8 +11,8 @@ from .tree import TreeData
 from .plot import PlotData
 from .climate import *
 from .model import ForestModel
-from .io_utils import UVAFMEReader, UVAFMEWriter
-from .uvafme import UVAFMEModel
+from .io_utils import GAPpyReader, GAPpyWriter
+from .uvafme import GAPpyModel
 
 __all__ = [
     'Parameters',
@@ -23,9 +23,9 @@ __all__ = [
     'TreeData',
     'PlotData',
     'ForestModel',
-    'UVAFMEReader',
-    'UVAFMEWriter',
-    'UVAFMEModel',
+    'GAPpyReader',
+    'GAPpyWriter',
+    'GAPpyModel',
     'CODENAME',
     'VERSION_ID'
 ]

@@ -1,5 +1,5 @@
 """
-Input/Output utilities for UVAFME vegetation model.
+Input/Output utilities for GAPpy vegetation model.
 Handles reading and writing of climate, species, and site data.
 """
 
@@ -91,8 +91,8 @@ def fatal_error(message: str):
     sys.exit(1)
 
 
-class UVAFMEReader:
-    """Handles reading of UVAFME input files."""
+class GAPpyReader:
+    """Handles reading of GAPpy input files."""
     
     def __init__(self, base_path: str = "input_data"):
         self.base_path = base_path
@@ -532,8 +532,8 @@ config_file=uvafme_config.json
             f.write(example_filelist)
 
 
-class UVAFMEWriter:
-    """Handles writing of UVAFME output files."""
+class GAPpyWriter:
+    """Handles writing of GAPpy output files."""
     
     def __init__(self, base_path: str = None):
         # Support multiple possible locations for output_data directory

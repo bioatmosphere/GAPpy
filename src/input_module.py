@@ -1,5 +1,5 @@
 """
-Input module for UVAFME vegetation model.
+Input module for GAPpy vegetation model.
 
 This module handles reading and parsing of all input files including
 parameters, site data, climate data, species data, and range data.
@@ -22,7 +22,7 @@ from .io_utils import count_records, split_line, quote_strip, fatal_error, warni
 
 class InputFileManager:
     """
-    Manages all input file operations for the UVAFME model.
+    Manages all input file operations for the GAPpy model.
 
     This class handles opening, reading, and parsing of various input files
     including parameters, site data, climate data, and species data.

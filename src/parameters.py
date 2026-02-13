@@ -1,5 +1,5 @@
 """
-Parameters module for UVAFME vegetation model.
+Parameters module for GAPpy vegetation model.
 Translated from Parameters.f90
 """
 
@@ -10,7 +10,7 @@ from .constants import *
 
 
 class Parameters:
-    """Global parameters for UVAFME model."""
+    """Global parameters for GAPpy model."""
     
     def __init__(self):
         # Basic parameters

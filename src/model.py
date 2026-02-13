@@ -1,5 +1,5 @@
 """
-Model module for UVAFME vegetation model.
+Model module for GAPpy vegetation model.
 Orchestrates biogeochemical processes, forest dynamics, and ecosystem interactions.
 """
 
@@ -196,31 +196,9 @@ class ForestModel:
     
     def process_soil_biogeochemistry(self, site: SiteData):
         """Process soil biogeochemical cycles with daily time steps."""
-        # Calculate annual litter inputs from existing trees
-        annual_litter_c1 = 0.0  # Above-ground litter
-        annual_litter_c2 = 0.0  # Below-ground litter
-        annual_litter_n1 = 0.0  # Above-ground N
-        annual_litter_n2 = 0.0  # Below-ground N
-
-        for plot in site.plots:
-            for tree in plot.trees:
-                if tree.mort_marker:
-                    # Dead tree contributes to litter
-                    annual_litter_c1 += tree.biomC * 0.7  # 70% above-ground
-                    annual_litter_c2 += tree.biomC * 0.3  # 30% below-ground
-                    annual_litter_n1 += tree.biomN * 0.7
-                    annual_litter_n2 += tree.biomN * 0.3
-                else:
-                    # Living tree contributes small amount (leaf fall, etc.)
-                    annual_turnover = 0.1  # 10% annual turnover
-                    annual_litter_c1 += tree.leaf_bm * annual_turnover
-                    annual_litter_n1 += tree.leaf_bm * annual_turnover / DEC_LEAF_C_N
-
-        # Convert annual litter to daily inputs
-        daily_litter_c1 = annual_litter_c1 / 365.0
-        daily_litter_c2 = annual_litter_c2 / 365.0
-        daily_litter_n1 = annual_litter_n1 / 365.0
-        daily_litter_n2 = annual_litter_n2 / 365.0
+        # Transfer previous year's litter into A0 pool (Fortran Model.f90 lines 158-159)
+        site.soil.A0_c0 += site.soil.C_into_A0
+        site.soil.A0_n0 += site.soil.N_into_A0
 
         # Initialize accumulators for annual totals
         total_C_resp = 0.0
@@ -273,9 +251,10 @@ class ForestModel:
             # Update canopy water content (critical for flood_days calculation!)
             site.leaf_area_w0 = water_results[9]  # Updated lai_w0
 
-            # Process soil decomposition with daily inputs
+            # Process soil decomposition (zero daily litter; litter enters via
+            # the A0 pulse transfer above, matching Fortran Model.f90 lines 152-159)
             avail_N, C_resp = site.soil.soil_decomp(
-                daily_litter_c1, daily_litter_c2, daily_litter_n1, daily_litter_n2,
+                0.0, 0.0, 0.0, 0.0,
                 day_temp, day_precip, aow0_scaled, saw0_scaled, sbw0_scaled
             )
 
@@ -439,10 +418,10 @@ class ForestModel:
                     canht = tree.canopy_ht
                     forht[it] = tree.forska_ht
                     
-                    # Update available species tracking
+                    # Update available species tracking (kron: 1 if any tree exceeds threshold, else 0)
                     max_threshold = site.species[k].max_diam * growth_thresh
                     if diam[it] > max_threshold:
-                        plot.avail_spec[k] = max(diam[it] - max_threshold, plot.avail_spec[k])
+                        plot.avail_spec[k] = 1.0
                     
                     # Height indices for light calculations
                     khc[it] = min(int(canht), len(plot.con_light) - 1)
@@ -714,17 +693,22 @@ class ForestModel:
                 # All trees die in disturbance
                 plot.trees.clear()
                 plot.numtrees = 0
-                
+
                 # Transfer all biomass to soil
                 site.soil.C_into_A0 += zc
                 site.soil.N_into_A0 += zn
                 NPP_loss += zc
                 NPPn_loss += zn
-                
+
+                # Mark that seedlings exist for renewal (Fortran line 695)
+                plot.seedling_number = 1.0
+
             else:
                 # NO PLOT-LEVEL DISTURBANCE - Individual tree mortality
+                plot.fire = 0
+                plot.wind = 0
                 surviving_trees = []
-                
+
                 for tree in plot.trees:
                     k = tree.species_index
                     tree.update_tree(site.species[k])
@@ -749,7 +733,9 @@ class ForestModel:
                         
                         site.soil.C_into_A0 += litter_c
                         site.soil.N_into_A0 += litter_n
-                        
+                        NPP_loss += litter_c
+                        NPPn_loss += litter_n
+
                         # Track biomass of surviving trees
                         if site.species[k].conifer:
                             biomc += tree.biomC + leaf_bm
@@ -787,199 +773,252 @@ class ForestModel:
         site.soil.biomc = biomc * uconvert
         site.soil.biomn = biomn * uconvert
         site.soil.net_prim_prodC = site.soil.net_prim_prodC - NPP_loss * uconvert
-        site.soil.net_prim_prodN = site.soil.net_prim_prodN - NPPn_loss * uconvert
+        # net_prim_prodN adjustment commented out in Fortran (Model.f90 line 792)
+        # site.soil.net_prim_prodN = site.soil.net_prim_prodN - NPPn_loss * uconvert
     
     def renewal(self, site: SiteData):
         """Process tree renewal - complete Fortran translation."""
-        from .constants import HEC_TO_M2, STEM_C_N, CON_LEAF_C_N, DEC_LEAF_C_N, STD_HT
+        from .constants import HEC_TO_M2, STEM_C_N, CON_LEAF_C_N, DEC_LEAF_C_N, STD_HT, CON_LEAF_RATIO
         from .random_utils import nrand
-        
-        # Early return if no available nitrogen
-        if site.soil.avail_N <= 0.0:
-            return
-        
+
         growth_thresh = 0.05
+        growth_min = 0.01
         epsilon = 1e-10
         num_species = len(site.species)
-        
-        for plot in site.plots:
-            # Check if recruitment can occur
-            can_recruit = (plot.numtrees != 0 or (plot.wind == 0 and plot.fire == 0))
-            
-            if can_recruit:
-                # Step 1: Calculate growth capacity and regrowth for all species
-                regrowth = np.zeros(num_species)
-                growmax = 0.0
-                
-                for i, species in enumerate(plot.species):
-                    # Growth capacity from environmental factors
-                    grow_cap = (species.fc_degday * species.fc_drought * 
-                               species.fc_flood * plot.nutrient[i])
-                    
-                    # Light response for regrowth calculation
-                    if species.conifer:
-                        light_factor = species.light_rsp(plot.con_light[0])
-                    else:
-                        light_factor = species.light_rsp(plot.dec_light[0])
-                    
-                    regrowth[i] = grow_cap * light_factor
-                    
-                    # Apply growth threshold filter
-                    if regrowth[i] <= growth_thresh:
-                        regrowth[i] = 0.0
-                    
-                    growmax = max(growmax, regrowth[i])
-                
-                # Step 2: Determine maximum recruitment number
-                max_renew = min(int(params.plotsize * growmax) - plot.numtrees,
-                               int(params.plotsize * 0.5))
-                nrenew = min(max(max_renew, 3), int(params.plotsize) - plot.numtrees)
-                nrenew = max(0, min(nrenew, params.maxtrees - plot.numtrees))
+        leaf_b = 1.0 + CON_LEAF_RATIO
 
-                # Check if this is first recruitment cycle for this plot
-                # The seedling calculation differs based on seedling_number
-                if plot.seedling_number == 0.0:
-                    # Step 3a: First recruitment - update seedbank and seedling populations
+        # Track totals across all plots
+        new_count = 0
+        net_prim_prod = 0.0
+        N_used = 0.0
+
+        # Plot loop only runs if available nitrogen exists (Fortran line 823)
+        if site.soil.avail_N > 0.0:
+            for plot in site.plots:
+                # Check if recruitment can occur (normal conditions)
+                can_recruit = (plot.numtrees != 0 or
+                               (plot.wind == 0 and plot.fire == 0))
+
+                # Initialize probability variables for this plot
+                prob = np.zeros(num_species)
+                probsum = 0.0
+                nrenew = 0
+
+                if can_recruit:
+                    # Step 1: Calculate growth capacity and regrowth
+                    regrowth = np.zeros(num_species)
+                    growmax = 0.0
+
                     for i, species in enumerate(plot.species):
-                        # Update seedbank
-                        plot.seedbank[i] += (
-                            species.invader +
-                            species.seed_num * plot.avail_spec[i] +
-                            species.sprout_num * plot.avail_spec[i]
-                        )
+                        grow_cap = (species.fc_degday * species.fc_drought *
+                                    species.fc_flood * plot.nutrient[i])
 
-                        # Transfer from seedbank to seedling if growth conditions met
-                        if regrowth[i] >= growth_thresh:
-                            plot.seedling[i] += plot.seedbank[i]
-                            plot.seedbank[i] = 0.0
+                        if species.conifer:
+                            light_factor = species.light_rsp(plot.con_light[0])
                         else:
-                            # Seedbank mortality
-                            plot.seedbank[i] *= species.seed_surv
+                            light_factor = species.light_rsp(plot.dec_light[0])
 
-                        # Apply fire response (if fire occurred)
-                        if plot.fire > 0:
-                            plot.seedling[i] = (plot.seedling[i] +
-                                              species.sprout_num * plot.avail_spec[i]) * species.fc_fire
+                        regrowth[i] = grow_cap * light_factor
+                        growmax = max(growmax, regrowth[i])
 
-                        # Update seedling_number to track maximum
-                        plot.seedling_number = max(int(plot.seedling[i]), plot.seedling_number)
+                        if regrowth[i] <= growth_thresh:
+                            regrowth[i] = 0.0
 
-                        # Scale to plot size
-                        plot.seedling[i] *= params.plotsize
+                    # Step 2: Determine maximum recruitment number
+                    max_renew = min(int(params.plotsize * growmax) - plot.numtrees,
+                                    int(params.plotsize * 0.5))
+                    nrenew = min(max(max_renew, 3),
+                                 int(params.plotsize) - plot.numtrees)
+                    nrenew = max(0, min(nrenew, params.maxtrees - plot.numtrees))
 
-                    # Step 4: Calculate species selection probabilities
-                    prob = np.zeros(num_species)
-                    probsum = 0.0
+                    # Seedbank/seedling pipeline differs on first vs subsequent cycles
+                    if plot.seedling_number == 0.0:
+                        # First recruitment cycle
+                        for i, species in enumerate(plot.species):
+                            plot.seedbank[i] += (
+                                species.invader +
+                                species.seed_num * plot.avail_spec[i] +
+                                species.sprout_num * plot.avail_spec[i]
+                            )
 
-                    for i in range(num_species):
-                        prob[i] = plot.seedling[i] * regrowth[i]
-                        probsum += prob[i]
+                            if regrowth[i] >= growth_thresh:
+                                plot.seedling[i] += plot.seedbank[i]
+                                plot.seedbank[i] = 0.0
+                            else:
+                                plot.seedbank[i] *= species.seed_surv
+
+                            species.fire_rsp(plot.fire)
+                            plot.seedling[i] = (
+                                plot.seedling[i] +
+                                species.sprout_num * plot.avail_spec[i]
+                            ) * species.fc_fire
+
+                            # kron: 1.0 if seedling > 0, else 0.0 (before scaling)
+                            plot.seedling_number = max(
+                                1.0 if plot.seedling[i] > 0.0 else 0.0,
+                                plot.seedling_number)
+
+                            plot.seedling[i] *= params.plotsize
+
+                        # Calculate probabilities after seedbank update
+                        for i in range(num_species):
+                            prob[i] = plot.seedling[i] * regrowth[i]
+                            probsum += prob[i]
+
+                    else:
+                        # Subsequent cycles: probabilities first, then update
+                        for i in range(num_species):
+                            prob[i] = plot.seedling[i] * regrowth[i]
+                            probsum += prob[i]
+
+                        for i, species in enumerate(plot.species):
+                            plot.seedbank[i] += (
+                                species.invader +
+                                species.seed_num * plot.avail_spec[i] +
+                                species.sprout_num * plot.avail_spec[i]
+                            )
+
+                            if regrowth[i] >= growth_min:
+                                plot.seedling[i] += plot.seedbank[i]
+                                plot.seedbank[i] = 0.0
+                            else:
+                                plot.seedbank[i] *= species.seed_surv
+
+                            species.fire_rsp(plot.fire)
+                            plot.seedling[i] = (
+                                plot.seedling[i] +
+                                species.sprout_num * plot.avail_spec[i]
+                            ) * species.fc_fire
+
+                            plot.seedling[i] *= params.plotsize
+
+                            # kron after scaling (matching Fortran order)
+                            plot.seedling_number = max(
+                                1.0 if plot.seedling[i] > 0.0 else 0.0,
+                                plot.seedling_number)
 
                 else:
-                    # Step 3b: Subsequent recruitments - use existing seedling populations
-                    # Calculate probabilities first (before scaling)
-                    prob = np.zeros(num_species)
-                    probsum = 0.0
+                    # Post-disturbance (numtrees == 0 AND recent disturbance)
+                    if plot.fire == 1 or plot.wind == 1:
+                        for i, species in enumerate(plot.species):
+                            grow_cap = (species.fc_degday * species.fc_drought *
+                                        species.fc_flood)
 
-                    for i in range(num_species):
-                        prob[i] = plot.seedling[i] * regrowth[i]
-                        probsum += prob[i]
+                            prob[i] = plot.seedling[i] * grow_cap
+                            probsum += prob[i]
 
-                    # Now update seedbank and seedling for next cycle
-                    for i, species in enumerate(plot.species):
-                        # Update seedbank
-                        plot.seedbank[i] += (
-                            species.invader +
-                            species.seed_num * plot.avail_spec[i] +
-                            species.sprout_num * plot.avail_spec[i]
-                        )
+                            plot.seedling[i] *= params.plotsize
 
-                        # Transfer from seedbank to seedling if minimum growth met
-                        growth_min = 0.0  # Minimum growth threshold
-                        if regrowth[i] >= growth_min:
-                            plot.seedling[i] += plot.seedbank[i]
-                            plot.seedbank[i] = 0.0
-                        else:
-                            # Seedbank mortality
-                            plot.seedbank[i] *= species.seed_surv
+                            plot.seedling_number = max(
+                                1.0 if plot.seedling[i] > 0.0 else 0.0,
+                                plot.seedling_number)
 
-                        # Apply fire response
-                        if plot.fire > 0:
-                            plot.seedling[i] = (plot.seedling[i] +
-                                              species.sprout_num * plot.avail_spec[i]) * species.fc_fire
+                        plot.fire = 0
+                        plot.wind = 0
+                    else:
+                        plot.fire = max(0, plot.fire - 1)
+                        plot.wind = max(0, plot.wind - 1)
 
-                        # Scale to plot size
-                        plot.seedling[i] *= params.plotsize
-
-                        # Update seedling_number
-                        plot.seedling_number = max(int(plot.seedling[i]), plot.seedling_number)
-                
-                # Proceed with recruitment if probabilities exist
-                if probsum > epsilon and nrenew > 0:
-                    # Normalize and create cumulative probabilities
+                # Normalize and create cumulative probabilities
+                if probsum > epsilon:
                     for i in range(num_species):
                         prob[i] /= probsum
-                    
                     for i in range(1, num_species):
-                        prob[i] += prob[i-1]
-                    
-                    # Step 5: Recruit new trees
+                        prob[i] += prob[i - 1]
+                else:
+                    nrenew = 0
+
+                # Recruit new trees
+                if nrenew >= 1:
                     for _ in range(nrenew):
-                        # Select species by probability
                         q0 = urand()
                         selected_species = 0
-                        
-                        while selected_species < num_species - 1 and q0 > prob[selected_species]:
-                            selected_species += 1
-                        
-                        # Ensure valid selection
-                        if plot.seedling[selected_species] > 0:
-                            # Decrement seedling count
-                            plot.seedling[selected_species] -= 1.0
-                            
-                            # Create new tree
-                            new_tree = TreeData()
-                            new_tree.initialize_tree(plot.species[selected_species], selected_species)
-                            
-                            # Initialize size with normal distribution
-                            z = 1.5 + nrand(0.0, 1.0)  # Normal random with mean=0, std=1
-                            z = max(0.5, min(2.5, z))   # Clamp between 0.5 and 2.5 cm
-                            
-                            new_tree.diam_bht = z
-                            new_tree.canopy_ht = 1.0
-                            new_tree.forska_ht = 1.0
-                            new_tree.mort_marker = False
-                            
-                            # Calculate derived attributes
-                            new_tree.forska_height()
-                            new_tree.stem_shape()
-                            new_tree.biomass_c()
-                            new_tree.biomass_n()
-                            new_tree.leaf_biomass_c()
-                            
-                            # Add to plot
-                            plot.trees.append(new_tree)
-                            plot.numtrees = len(plot.trees)
-                            
-                            # Update carbon and nitrogen pools
-                            species = plot.species[selected_species]
-                            if species.conifer:
-                                site.soil.net_prim_prodC += new_tree.biomC + new_tree.leaf_bm * (1.0 + CON_LEAF_RATIO)
-                                site.soil.net_prim_prodN += (new_tree.biomC / STEM_C_N + 
-                                                           new_tree.leaf_bm / CON_LEAF_C_N * (1.0 + CON_LEAF_RATIO))
-                            else:
-                                site.soil.net_prim_prodC += new_tree.biomC + new_tree.leaf_bm
-                                site.soil.net_prim_prodN += new_tree.biomC / STEM_C_N + new_tree.leaf_bm / DEC_LEAF_C_N
-            
-            # Step 6: Scale seedlings back down (reverse the plotsize multiplication)
-            # and apply seedling mortality for next cycle
-            for i in range(num_species):
-                # Scale back to per-m² units by dividing by plotsize
-                # and apply seedling survival factor
-                plot.seedling[i] = (plot.seedling[i] * plot.species[i].seedling_lg) / params.plotsize
 
-            # Reset fire indicator
-            plot.fire = 0
+                        while q0 > prob[selected_species]:
+                            selected_species += 1
+                            if selected_species >= num_species:
+                                # Fallback: random reselection (Fortran line 1015)
+                                selected_species = min(
+                                    int(urand(0.0, float(num_species))),
+                                    num_species - 1)
+                                q0 = urand()
+
+                        new_count += 1
+                        plot.seedling[selected_species] -= 1.0
+
+                        new_tree = TreeData()
+                        new_tree.initialize_tree(
+                            plot.species[selected_species], selected_species)
+
+                        z = 1.5 + nrand(0.0, 1.0)
+                        z = max(0.5, min(2.5, z))
+
+                        new_tree.diam_bht = z
+                        new_tree.canopy_ht = 1.0
+
+                        new_tree.forska_height()
+                        new_tree.stem_shape()
+                        new_tree.biomass_c()
+                        new_tree.biomass_n()
+                        new_tree.leaf_biomass_c()
+
+                        plot.trees.append(new_tree)
+                        plot.numtrees = len(plot.trees)
+
+                        # Leaf biomass for litter/NPP (Fortran lines 1046-1072)
+                        zz = new_tree.leaf_bm
+
+                        species = plot.species[selected_species]
+                        if species.conifer:
+                            net_prim_prod += zz * leaf_b + new_tree.biomC
+                            N_used += zz / CON_LEAF_C_N + new_tree.biomN
+
+                            site.soil.C_into_A0 += zz * (leaf_b - 1.0)
+                            site.soil.N_into_A0 += zz * (leaf_b - 1.0) / CON_LEAF_C_N
+                        else:
+                            net_prim_prod += new_tree.biomC + zz
+                            N_used += new_tree.biomN + zz / DEC_LEAF_C_N
+
+                            site.soil.C_into_A0 += zz
+                            site.soil.N_into_A0 += zz / DEC_LEAF_C_N
+
+                # Seedling scaling and mortality for next cycle (Fortran lines 1077-1080)
+                for i in range(num_species):
+                    plot.seedling[i] = (plot.seedling[i] *
+                                        plot.species[i].seedling_lg) / params.plotsize
+
+                # Reset fire indicator (Fortran line 1083)
+                plot.fire = 0
+
+        # End-of-function soil updates - ALWAYS execute (Fortran lines 1089-1111)
+        uconvert = HEC_TO_M2 / params.plotsize / site.numplots
+        N_used *= uconvert
+        net_prim_prod *= uconvert
+
+        # N balance
+        avtt = site.soil.avail_N - N_used
+        if avtt > 0.0:
+            site.soil.net_N_into_A0 = avtt * min(site.soil.runoff / 1000.0, 0.1)
+            site.soil.A_n0 += avtt - site.soil.net_N_into_A0
+        else:
+            site.soil.A_n0 += avtt
+            site.soil.net_N_into_A0 = 0.0
+
+        # Runoff leaching
+        site.soil.A_n0 -= 0.00002 * site.soil.runoff
+        site.soil.A_c0 -= site.soil.net_N_into_A0 * 20.0
+        site.soil.BL_c0 += site.soil.net_N_into_A0 * 20.0
+        site.soil.BL_n0 += site.soil.net_N_into_A0
+
+        # Unit conversions for litter inputs
+        site.soil.C_into_A0 *= uconvert
+        site.soil.N_into_A0 *= uconvert
+        site.soil.N_used = N_used
+
+        # Update NPP totals
+        site.soil.net_prim_prodC += net_prim_prod
+        site.soil.net_prim_prodN += N_used
+        site.soil.new_growth = int(new_count * uconvert)
     
     def initialize_forest(self, site: SiteData):
         """Initialize forest with starting trees."""

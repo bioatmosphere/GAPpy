@@ -1,5 +1,5 @@
 """
-Species module for UVAFME vegetation model.
+Species module for GAPpy vegetation model.
 Translated from Species.f90
 """
 
@@ -175,38 +175,41 @@ class SpeciesData:
         self.fc_fire = resp
     
     def poor_soil_rsp(self, n_avail):
-        """Calculate poor soil nutrient response."""
-        # Based on the original poor_soil_rsp function but adapted for class method
-        nrc = self.lownutr_tol
+        """Calculate poor soil nutrient response.
+
+        Coefficient arrays indexed by lownutr_tol (1=intolerant, 3=tolerant).
+        Index 3 yields the highest response at low fertility.
+        """
+        nrc = max(1, min(3, self.lownutr_tol))
         sf = max(0.0, min(1.0, n_avail))
-        
+
         fert_c1 = [-0.6274, -0.2352, 0.2133]
         fert_c2 = [3.600, 2.771, 1.789]
         fert_c3 = [-1.994, -1.550, -1.014]
-        
-        # WARNING: This appears to be a bug in the original code
-        nrc = 4 - nrc
-        nrc = max(1, min(3, nrc))  # Clamp to valid range
-        
+
         fpoor = fert_c1[nrc - 1] + fert_c2[nrc - 1] * sf + fert_c3[nrc - 1] * sf**2
         fpoor = max(0.0, min(1.0, fpoor))
-        
+
         return fpoor * sf
 
 
 def poor_soil_rsp(sf, nrc):
-    """Compute quadratic nutrient response factors."""
+    """Compute quadratic nutrient response factors.
+
+    Args:
+        sf: soil fertility (supply:demand ratio, clamped to [0, 1])
+        nrc: nutrient response class (1=intolerant, 3=tolerant)
+    """
     fert_c1 = [-0.6274, -0.2352, 0.2133]
     fert_c2 = [3.600, 2.771, 1.789]
     fert_c3 = [-1.994, -1.550, -1.014]
-    
-    # WARNING: This appears to be a bug in the original code
-    nrc = 4 - nrc
+
+    nrc = max(1, min(3, nrc))
     sf = min(sf, 1.0)
-    
+
     fpoor = fert_c1[nrc - 1] + fert_c2[nrc - 1] * sf + fert_c3[nrc - 1] * sf**2
     fpoor = max(0.0, min(1.0, fpoor))
-    
+
     return fpoor * sf
 
 

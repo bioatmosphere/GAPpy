@@ -1,5 +1,5 @@
 """
-Plot module for UVAFME vegetation model.
+Plot module for GAPpy vegetation model.
 Translated from Plot.f90
 """
 

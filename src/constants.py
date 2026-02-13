@@ -1,13 +1,13 @@
 """
-Constants module for UVAFME vegetation model.
+Constants module for GAPpy vegetation model.
 Translated from Constants.f90
 """
 
 import math
 
 # Code identifiers
-CODENAME = 'UVAFME'
-VERSION_ID = '2012'
+CODENAME = 'GAPpy'
+VERSION_ID = '1.0'
 
 # Global constants
 PI = 4.0 * math.atan(1.0)

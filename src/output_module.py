@@ -1,5 +1,5 @@
 """
-Output module for UVAFME vegetation model.
+Output module for GAPpy vegetation model.
 
 This module handles writing model output data to CSV files including
 genus data, species data, site data, soil data, and tree data.
@@ -21,7 +21,7 @@ from .utilities import stddev
 
 class OutputManager:
     """
-    Manages all output file operations for the UVAFME model.
+    Manages all output file operations for the GAPpy model.
 
     This class handles opening, writing, and closing output files
     including genus data, species data, site data, and tree data.

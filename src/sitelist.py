@@ -1,5 +1,5 @@
 """
-Sitelist module for UVAFME vegetation model.
+Sitelist module for GAPpy vegetation model.
 
 This module handles initialization of site lists and manages
 the attachment of species data to sites.

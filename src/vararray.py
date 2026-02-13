@@ -1,5 +1,5 @@
 """
-Dynamic array/list utilities for UVAFME model.
+Dynamic array/list utilities for GAPpy model.
 
 This module provides dynamically growing arrays similar to the Fortran
 vararray module originally written by Arjen Markus.
@@ -8,7 +8,7 @@ The module is straightforward: it defines a suitable data structure,
 data can be added to the list and you can retrieve data from it.
 
 Original Fortran module written by Arjen Markus.
-Translated to Python for the GoG/UVAFME vegetation model.
+Translated to Python for GAPpy.
 """
 
 from typing import List, Optional, Any, Generic, TypeVar
