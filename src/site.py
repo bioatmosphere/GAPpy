@@ -1,5 +1,5 @@
 """
-Site module for GAPpy vegetation model.
+Site module for GAPPY vegetation model.
 Translated from Site.f90
 """
 
@@ -15,10 +15,26 @@ def kron(x):
 
 
 class SiteData:
-    """Site data structure containing site attributes and species/plot data."""
-    
-    def __init__(self):
-        self.soil = SoilData()
+    """
+    Site data structure containing site attributes and species/plot data.
+
+    Supports both empirical and mechanistic (DEMENTpy) soil decomposition.
+    """
+
+    def __init__(self, use_dement=False, n_plots=200, spatial_mode='aggregated'):
+        """
+        Initialize site data.
+
+        Args:
+            use_dement: If True, use DEMENTpy mechanistic soil decomposition
+            n_plots: Number of plots (for DEMENTpy spatial coupling)
+            spatial_mode: 'aggregated' or 'one_to_one' (for DEMENTpy)
+        """
+        self.soil = SoilData(
+            use_dement=use_dement,
+            n_plots=n_plots,
+            spatial_mode=spatial_mode
+        )
         self.plots = []
         self.species = []
         self.fc_flood = []

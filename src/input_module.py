@@ -1,5 +1,5 @@
 """
-Input module for GAPpy vegetation model.
+Input module for GAPPY vegetation model.
 
 This module handles reading and parsing of all input files including
 parameters, site data, climate data, species data, and range data.
@@ -22,7 +22,7 @@ from .io_utils import count_records, split_line, quote_strip, fatal_error, warni
 
 class InputFileManager:
     """
-    Manages all input file operations for the GAPpy model.
+    Manages all input file operations for the GAPPY model.
 
     This class handles opening, reading, and parsing of various input files
     including parameters, site data, climate data, and species data.
@@ -66,7 +66,7 @@ class InputFileManager:
             raise FileNotFoundError("Could not find input_data directory in any expected location")
 
         self.filenames = {
-            'runtime': os.path.join(input_base_path, 'uvafme_config.json'),
+            'runtime': os.path.join(input_base_path, 'gappy_config.json'),
             'sitelist': os.path.join(input_base_path, 'sites.csv'),
             'climate': os.path.join(input_base_path, 'climate.csv'),
             'species': os.path.join(input_base_path, 'species.csv'),
@@ -212,12 +212,16 @@ class InputFileManager:
         print(f'Site data initialized. Total read in: {len(site_ids)}')
         return site_ids
 
-    def read_sites(self, site_ids: List[int]) -> List[SiteData]:
+    def read_sites(self, site_ids: List[int], use_dement=False,
+                   n_plots=200, spatial_mode='aggregated') -> List[SiteData]:
         """
         Read site data from sites file.
 
         Args:
             site_ids: List of site IDs to read
+            use_dement: Whether to use DEMENTpy mechanistic soil decomposition
+            n_plots: Number of plots (for DEMENTpy)
+            spatial_mode: DEMENTpy spatial mode ('aggregated' or 'one_to_one')
 
         Returns:
             List of SiteData objects
@@ -236,9 +240,13 @@ class InputFileManager:
                     site_id = int(row['site'])  # 'site' maps to site_id
 
                     if site_id in site_ids:
-                        site = SiteData()
+                        site = SiteData(
+                            use_dement=use_dement,
+                            n_plots=n_plots,
+                            spatial_mode=spatial_mode
+                        )
 
-                        # Parse site data from CSV row using UVAFME column names
+                        # Parse site data from CSV row using GAPPY column names
                         site.initialize_site(
                             siteid=site_id,
                             sitename=row['name'],  # 'name' maps to site_name
@@ -305,7 +313,7 @@ class InputFileManager:
                     # Find matching site
                     site = next((s for s in sites if s.site_id == site_id), None)
                     if site:
-                        # Read temperature and precipitation data using UVAFME column names
+                        # Read temperature and precipitation data using GAPPY column names
                         months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
                                  'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
                         tmin = [float(row[f'tmin_{month}']) for month in months]
@@ -441,7 +449,7 @@ class InputFileManager:
                             print(f"Warning: Error reading column '{key}': {e}, using default {default_val}")
                             return default_val
 
-                    # Map UVAFME CSV column names to expected names
+                    # Map GAPPY CSV column names to expected names
                     # Initialize species from CSV data with mapped column access
                     species.initialize_species(
                         species_id=safe_get('Individual', 0, int),  # 'Individual' maps to species_id

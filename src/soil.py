@@ -1,10 +1,28 @@
 """
-Soil module for GAPpy vegetation model.
+Soil module for GAPPY vegetation model.
 Translated from Soil.f90
+
+This module can use either:
+1. Original empirical soil decomposition model (default)
+2. Mechanistic DEMENTpy microbial decomposition model (when use_dement=True)
 """
 
 import numpy as np
 from .constants import *
+
+# Optional DEMENTpy integration
+try:
+    import sys
+    import os
+    # Add integration module to path
+    integration_path = os.path.join(os.path.dirname(__file__), '../integration')
+    if integration_path not in sys.path:
+        sys.path.insert(0, integration_path)
+    from dement_adapter import DEMENTpyAdapter
+    DEMENT_AVAILABLE = True
+except ImportError:
+    DEMENT_AVAILABLE = False
+    DEMENTpyAdapter = None
 
 # Global constants
 AO_CN_0 = 30.0
@@ -24,9 +42,22 @@ LAI_MAX = 0.15
 
 
 class SoilData:
-    """Soil data structure containing soil properties and state variables."""
-    
-    def __init__(self):
+    """
+    Soil data structure containing soil properties and state variables.
+
+    Can use either empirical or mechanistic (DEMENTpy) soil decomposition.
+    """
+
+    def __init__(self, use_dement=False, n_plots=200, spatial_mode='aggregated'):
+        """
+        Initialize soil data.
+
+        Args:
+            use_dement: If True, use DEMENTpy mechanistic decomposition
+            n_plots: Number of plots (for DEMENTpy spatial coupling)
+            spatial_mode: 'aggregated' or 'one_to_one' (for DEMENTpy)
+        """
+        # Soil state variables
         self.A0_c0 = 0.0
         self.A_c0 = 0.0
         self.A0_n0 = 0.0
@@ -53,12 +84,52 @@ class SoilData:
         self.total_C_rsp = 0.0
         self.new_growth = 0
 
-    def soil_decomp(self, litter_c1, litter_c2, litter_n1, litter_n2, 
-                    tempC, precip, aow0_scaled_by_max, saw0_scaled_by_fc, 
-                    sbw0_scaled_by_max):
+        # DEMENTpy integration
+        self.use_dement = use_dement
+        self.dement_adapter = None
+
+        if use_dement:
+            if not DEMENT_AVAILABLE:
+                raise ImportError(
+                    "DEMENTpy adapter not available. "
+                    "Please ensure model/integration module is installed."
+                )
+
+            print(f"Initializing DEMENTpy adapter (spatial_mode={spatial_mode})")
+
+            # Create adapter with current soil state for initialization
+            init_site_data = {
+                'A0_c0': self.A0_c0 if self.A0_c0 > 0 else 5.0,  # Default if not set
+                'A0_n0': self.A0_n0 if self.A0_n0 > 0 else 0.2,
+                'A_c0': self.A_c0 if self.A_c0 > 0 else 50.0,
+                'A_n0': self.A_n0 if self.A_n0 > 0 else 2.5,
+                'BL_c0': self.BL_c0 if self.BL_c0 > 0 else 20.0,
+                'BL_n0': self.BL_n0 if self.BL_n0 > 0 else 1.0,
+            }
+
+            self.dement_adapter = DEMENTpyAdapter(
+                n_plots=n_plots,
+                spatial_mode=spatial_mode,
+                enable_dement=True  # Enable real DEMENTpy mechanistic mode
+            )
+
+            # Initialize adapter with current soil state
+            self.dement_adapter.initialize_dement_grids(init_site_data)
+
+            print(f"  ✓ DEMENTpy adapter initialized")
+            print(f"  ✓ Mode: {spatial_mode}")
+            print(f"  ✓ Number of grids: {self.dement_adapter.n_grids}")
+
+    def soil_decomp(self, litter_c1, litter_c2, litter_n1, litter_n2,
+                    tempC, precip, aow0_scaled_by_max, saw0_scaled_by_fc,
+                    sbw0_scaled_by_max, plot_index=None):
         """
         Soil decomposition model for computing available N and soil respiration.
-        
+
+        Can use either:
+        1. Original empirical model (default)
+        2. DEMENTpy mechanistic model (if use_dement=True)
+
         Parameters:
         - litter_c1/2: input C as litter (above/under ground): tc/ha/d
         - litter_n1/2: input N as litter (above/under ground): tn/ha/d
@@ -67,12 +138,39 @@ class SoilData:
         - aow0_scaled_by_max: aow0/aowmax cm/cm
         - saw0_scaled_by_fc: saw0/safc cm/cm
         - sbw0_scaled_by_max: sbw0/sbwmax cm/cm (never used)
-        
+        - plot_index: Plot index for DEMENTpy one-to-one mode (optional)
+
         Returns:
         - avail_N: available N for plant growth tn/ha
         - C_resp: emission to atmosphere as CO2 tc/ha/d
         """
-        
+
+        # Use DEMENTpy if enabled
+        if self.use_dement and self.dement_adapter is not None:
+            avail_N, C_resp = self.dement_adapter.couple_soil_decomp(
+                litter_c1, litter_c2, litter_n1, litter_n2,
+                tempC, precip,
+                aow0_scaled_by_max, saw0_scaled_by_fc, sbw0_scaled_by_max,
+                plot_index=plot_index
+            )
+
+            # Update soil state from adapter outputs
+            self.avail_N = avail_N
+
+            # Sync layer pools back to SoilData when in layered mode
+            if (hasattr(self.dement_adapter, 'spatial_mode')
+                    and self.dement_adapter.spatial_mode == 'layered'):
+                pools = self.dement_adapter.layer_pools
+                self.A0_c0 = pools['ao_c']
+                self.A0_n0 = pools['ao_n']
+                self.A_c0 = pools['sa_c']
+                self.A_n0 = pools['sa_n']
+                self.BL_c0 = pools['sb_c']
+                self.BL_n0 = pools['sb_n']
+
+            return avail_N, C_resp
+
+        # Original empirical model (default)
         # Copy from object to local variables
         ao_c0 = self.A0_c0
         ao_n0 = self.A0_n0
