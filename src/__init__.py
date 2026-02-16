@@ -12,7 +12,7 @@ from .plot import PlotData
 from .climate import *
 from .model import ForestModel
 from .io_utils import GAPpyReader, GAPpyWriter
-from .uvafme import GAPpyModel
+from .gappy import GAPPYModel
 
 __all__ = [
     'Parameters',
@@ -25,7 +25,7 @@ __all__ = [
     'ForestModel',
     'GAPpyReader',
     'GAPpyWriter',
-    'GAPpyModel',
+    'GAPPYModel',
     'CODENAME',
     'VERSION_ID'
 ]
