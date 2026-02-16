@@ -35,26 +35,23 @@ class ForestModel:
             set_site_rng_seed(fixed_seed=False)
     
     def bio_geo_climate(self, site: SiteData, year: int):
-        """Process biogeochemical climate interactions."""
+        """Process biogeochemical climate interactions.
+
+        Matches Fortran BioGeoClimate order:
+        1. Prepare daily climate arrays
+        2. Daily loop: soil water, decomp, accumulate degday/growdays/drydays/flooddays/PET
+        3. Species climate responses using computed values
+        """
         # Calculate daily climate variables
         self.calculate_daily_climate(site, year)
-        
-        # Calculate growing degree days
-        self.calculate_degree_days(site)
-        
-        # Calculate potential evapotranspiration
-        self.calculate_potential_evapotranspiration(site)
-        
-        # Update species climate response factors
-        self.update_species_climate_responses(site)
-        
-        # Debug: Check if environmental factors are being set (only year 0)
-        if year == 0 and site.species and len(site.species) > 0:
-            s = site.species[0]  # Check first species
-            print(f"  DEBUG Year {year}: Species 0 - degday={s.fc_degday:.3f}, drought={s.fc_drought:.3f}, flood={s.fc_flood:.3f}")
-        
-        # Process soil biogeochemistry
+
+        # Process soil biogeochemistry (daily loop computes degday, growdays,
+        # drydays, flooddays, PET — matching Fortran Model.f90 lines 161-236)
         self.process_soil_biogeochemistry(site)
+
+        # Update species climate response factors using computed values
+        # (matches Fortran Model.f90 lines 219-222)
+        self.update_species_climate_responses(site)
     
     def calculate_daily_climate(self, site: SiteData, year: int):
         """Calculate daily climate variables from monthly data with stochastic variability."""
@@ -108,12 +105,8 @@ class ForestModel:
         # Store atmospheric N deposition (calculated from monthly precip)
         site.rain_n = rain_n
 
-        # Calculate daily averages for the year
-        site.rain = np.mean(daily_precip) / 10.0  # Convert to cm/day
-
-        # Calculate temperature statistics
-        daily_temp_avg = (daily_tmin + daily_tmax) / 2.0
-        site.freeze = np.sum(daily_temp_avg < 0) / len(daily_temp_avg)
+        # Store total annual rainfall as sum of monthly precip (matches Fortran Model.f90:123,231)
+        site.rain = np.sum(precip_with_var)
     
     def calculate_degree_days(self, site: SiteData):
         """Calculate growing degree days."""
@@ -164,115 +157,140 @@ class ForestModel:
         site.pot_evap_day = np.mean(monthly_pet)
     
     def update_species_climate_responses(self, site: SiteData):
-        """Update species climate response factors."""
-        for plot in site.plots:
-            for i, species in enumerate(plot.species):
-                # DEBUG: Print species temperature parameters for first species
-                if not hasattr(self, '_debug_species_printed') and i == 0:
-                    print(f"DEBUG species {i}: deg_day_min={species.deg_day_min}, deg_day_opt={species.deg_day_opt}, deg_day_max={species.deg_day_max}")
-                    print(f"DEBUG temp_rsp input: site.deg_days={site.deg_days}")
-                    self._debug_species_printed = True
-                
-                # Temperature response
-                species.temp_rsp(site.deg_days)
-                
-                # DEBUG: Print temperature response result
-                if hasattr(self, '_debug_species_printed') and not hasattr(self, '_debug_temp_rsp_printed') and i == 0:
-                    print(f"DEBUG temp_rsp result: fc_degday={species.fc_degday}")
-                    self._debug_temp_rsp_printed = True
-                
-                # Drought response (simplified)
-                dry_days = max(0, 100 - site.rain * 365)  # Estimate dry days
-                dry_days_surface = dry_days * 0.8  # Surface drying faster
-                species.drought_rsp(dry_days, dry_days_surface)
-                
-                # Flood response (simplified)
-                flood_days = max(0, site.rain * 365 - 1000) / 100  # Estimate flood days
-                species.flood_rsp(flood_days)
-                
-                # Fire response (based on site probability)
-                fire_occurrence = 1 if urand() < site.fire_prob else 0
-                species.fire_rsp(fire_occurrence)
+        """Update species climate response factors.
+
+        Uses degday, drydays, and flooddays computed by process_soil_biogeochemistry
+        from the actual daily soil water balance (matches Fortran Model.f90:219-222).
+        """
+        num_species = len(site.species)
+        for k in range(num_species):
+            site.species[k].temp_rsp(site.deg_days)
+            site.species[k].drought_rsp(site.dry_days_upper_layer,
+                                        site.dry_days_base_layer)
+            site.species[k].flood_rsp(site.flood_days)
     
     def process_soil_biogeochemistry(self, site: SiteData):
-        """Process soil biogeochemical cycles with daily time steps."""
+        """Process soil biogeochemical cycles with daily time steps.
+
+        Matches Fortran Model.f90 BioGeoClimate daily loop (lines 161-236):
+        - Uses Hargreaves PET with per-day extraterrestrial radiation
+        - Accumulates degday, growdays, drydays, flooddays from soil water state
+        - Normalizes drydays/flooddays by growing season length
+        """
         # Transfer previous year's litter into A0 pool (Fortran Model.f90 lines 158-159)
         site.soil.A0_c0 += site.soil.C_into_A0
         site.soil.A0_n0 += site.soil.N_into_A0
 
-        # Initialize accumulators for annual totals
+        # Initialize accumulators (Fortran Model.f90 lines 142-156)
         total_C_resp = 0.0
         total_avail_N = 0.0
-        total_act_evap = 0.0
+        total_pet = 0.0
+        total_aet = 0.0
+        degday = 0.0
+        freeze = 0.0  # Local variable, always 0.0 (matches Fortran Model.f90:147)
+        growdays = 0.0
+        drydays_upper = 0.0
+        drydays_base = 0.0
+        flooddays = 0.0
+        outwater = 0.0
 
-        # Daily loop matching Fortran Model.f90 lines 161-186
+        min_grow_temp = 5.0
+        max_dry_parm = 1.0001
+        min_flood_parm = 0.9999
+
+        # Daily loop matching Fortran Model.f90 lines 161-206
         days_per_year = 365
         for day in range(days_per_year):
+            julia = day + 1  # 1-based Julian day
+
             # Get daily climate values
             day_tmin = site.daily_tmin[day]
             day_tmax = site.daily_tmax[day]
             day_precip = site.daily_precip[day]  # Already in cm
             day_temp = (day_tmin + day_tmax) / 2.0
 
-            # Daily potential evapotranspiration (from daily temp)
-            # Use Hamon equation like in calculate_potential_evapotranspiration
-            lat_rad = site.latitude * PI / 180.0
-            day_of_year = day + 1
-
-            # Solar declination
-            decl = 0.409 * math.sin(2.0 * PI * day_of_year / 365.0 - 1.39)
-
-            # Day length calculation
-            # Clamp the argument to [-1, 1] to avoid domain error at extreme latitudes
-            cos_arg = -math.tan(lat_rad) * math.tan(decl)
-            cos_arg = max(-1.0, min(1.0, cos_arg))
-            ws = math.acos(cos_arg)
-            daylength_hours = 24.0 * ws / PI
-
-            # Potential evapotranspiration (Hamon equation)
-            if day_temp > 0:
-                sat_vap_density = 0.622 * 6.108 * math.exp(17.27 * day_temp / (237.3 + day_temp))
-                pot_ev_day = 0.1651 * daylength_hours * sat_vap_density / (day_temp + 273.3)
-            else:
-                pot_ev_day = 0.0
+            # Extraterrestrial radiation and Hargreaves PET (Fortran Model.f90:165-167)
+            erad, daylength, exradmx = ex_rad(julia, site.latitude)
+            pot_ev_day = hargrea(day_tmin, day_tmax, day_temp, erad)
 
             # Process soil water balance with daily climate
+            # Uses freeze=0.0 (local), matching Fortran Model.f90:170
             water_results = site.soil.soil_water(
                 site.slope, site.leaf_area_ind, site.leaf_area_w0,
-                site.sigma, site.freeze, day_precip, pot_ev_day
+                site.sigma, freeze, day_precip, pot_ev_day
             )
 
             # Extract soil water factors
             act_ev_day = water_results[0]
-            aow0_scaled = water_results[3]  # aow0_scaled_by_max
-            saw0_scaled = water_results[7]  # saw0_scaled_by_fc
-            sbw0_scaled = water_results[5]  # sbw0_scaled_by_max
+            laiw0_scaled_by_max = water_results[1]
+            laiw0_scaled_by_min = water_results[2]
+            aow0_scaled_by_max = water_results[3]
+            aow0_scaled_by_min = water_results[4]
+            sbw0_scaled_by_max = water_results[5]
+            sbw0_scaled_by_min = water_results[6]
+            saw0_scaled_by_fc = water_results[7]
+            saw0_scaled_by_wp = water_results[8]
 
-            # Update canopy water content (critical for flood_days calculation!)
+            # Update canopy water content (critical!)
             site.leaf_area_w0 = water_results[9]  # Updated lai_w0
 
-            # Process soil decomposition (zero daily litter; litter enters via
-            # the A0 pulse transfer above, matching Fortran Model.f90 lines 152-159)
+            # Process soil decomposition (Fortran Model.f90:178-180)
             avail_N, C_resp = site.soil.soil_decomp(
                 0.0, 0.0, 0.0, 0.0,
-                day_temp, day_precip, aow0_scaled, saw0_scaled, sbw0_scaled
+                day_temp, day_precip, aow0_scaled_by_max, saw0_scaled_by_fc,
+                sbw0_scaled_by_max
             )
 
-            # Accumulate daily outputs (matches Fortran lines 183-184)
-            total_C_resp += C_resp
+            # Accumulate daily outputs (Fortran Model.f90:182-186)
+            outwater += site.soil.runoff
             total_avail_N += max(avail_N, 0.0)
-            total_act_evap += act_ev_day
+            total_pet += pot_ev_day
+            total_aet += act_ev_day
+            total_C_resp += C_resp
 
-        # Store annual totals (matches Fortran line 186, 225)
+            # Accumulate degree days and growing season (Fortran Model.f90:189-192)
+            if day_temp >= min_grow_temp:
+                degday += (day_temp - min_grow_temp)
+                growdays += 1.0
+
+            # Accumulate dry days from soil water state (Fortran Model.f90:193-200)
+            if (saw0_scaled_by_fc < max_dry_parm and
+                    sbw0_scaled_by_min < max_dry_parm and
+                    sbw0_scaled_by_max < max_dry_parm):
+                drydays_upper += 1.0
+
+            if saw0_scaled_by_wp < max_dry_parm:
+                drydays_base += 1.0
+
+            # Accumulate flood days (Fortran Model.f90:202-204)
+            # Note: Fortran uses kron(yxd3) where yxd3 is never set (known bug),
+            # so flooddays effectively stays 0. We replicate this behavior.
+            # if aow0_scaled_by_min > min_flood_parm:
+            #     flooddays += kron(yxd3)  # yxd3 uninitialized → 0.0 → kron(0)=0
+
+        # Normalize by growing season (Fortran Model.f90:208-217)
+        if growdays == 0:
+            drydays_upper = 0.0
+            drydays_base = 0.0
+            flooddays = 0.0
+        else:
+            tmp = max(min(site.rain / total_pet, 1.0),
+                      min(total_aet / total_pet, 1.0)) if total_pet > 0 else 1.0
+            drydays_upper = min(drydays_upper / growdays, 1.0 - tmp)
+            drydays_base = drydays_base / growdays
+            flooddays = flooddays / growdays
+
+        # Store annual totals (Fortran Model.f90:225-236)
+        site.soil.avail_N = total_avail_N + site.rain_n
         site.soil.total_C_rsp = total_C_resp
-        site.soil.avail_N = total_avail_N + site.rain_n  # Add atmospheric N from monthly precip
-        site.act_evap_day = total_act_evap / days_per_year  # Average daily evap
-
-        # Calculate final water stress indicators from last day's state
-        # (water_results from last iteration)
-        site.dry_days_upper_layer = max(0, 100 - water_results[3] * 100)
-        site.dry_days_base_layer = max(0, 100 - water_results[5] * 100)
-        site.flood_days = max(0, water_results[1] * 100 - 80)
+        site.soil.runoff = outwater
+        site.pot_evap_day = total_pet
+        site.act_evap_day = total_aet
+        site.grow_days = growdays
+        site.deg_days = degday
+        site.flood_days = flooddays
+        site.dry_days_upper_layer = drydays_upper
+        site.dry_days_base_layer = drydays_base
     
     def canopy(self, site: SiteData, year: int = -1):
         """Process canopy light interactions - complete Fortran translation."""
@@ -644,64 +662,70 @@ class ForestModel:
             
             if fire_prob < site.fire_prob or wind_prob < site.wind_prob:
                 # PLOT-LEVEL DISTURBANCE OCCURS
-                
-                # Calculate total biomass from all trees before they die  
-                zc = 0.0  # Total carbon
-                zn = 0.0  # Total nitrogen
-                
-                for tree in plot.trees:
-                    k = tree.species_index
-                    tree.update_tree(site.species[k])  # Update with current species data
-                    
-                    # Calculate leaf biomass
-                    tree.leaf_biomass_c()
-                    tmp = tree.leaf_bm
-                    
-                    if site.species[k].conifer:
-                        zc += tree.biomC + tmp * leaf_b
-                        zn += tree.biomC / STEM_C_N + tmp / CON_LEAF_C_N * leaf_b
+
+                if plot.numtrees > 0:
+                    # Determine disturbance type (fire takes precedence)
+                    if fire_prob < site.fire_prob:
+                        # FIRE DISTURBANCE
+                        plot.fire = 5
+
+                        # Fire response for each species and seedling establishment
+                        for is_idx in range(num_species):
+                            site.species[is_idx].fire_rsp(1)  # Fire occurred
+                            plot.seedling[is_idx] = (
+                                site.species[is_idx].invader * 10.0 +
+                                site.species[is_idx].sprout_num * plot.avail_spec[is_idx]
+                            ) * site.species[is_idx].fc_fire
+
+                        plot.wind = 0
                     else:
-                        zc += tree.biomC + tmp
-                        zn += tree.biomC / STEM_C_N + tmp / DEC_LEAF_C_N
-                
-                # Determine disturbance type (fire takes precedence)
-                if fire_prob < site.fire_prob:
-                    # FIRE DISTURBANCE
-                    plot.fire = 5
-                    plot.wind = 0
-                    
-                    # Fire response for each species and seedling establishment
-                    for is_idx in range(num_species):
-                        site.species[is_idx].fire_rsp(1)  # Fire occurred
-                        plot.seedling[is_idx] = (
-                            site.species[is_idx].invader * 10.0 +
-                            site.species[is_idx].sprout_num * plot.avail_spec[is_idx]
-                        ) * site.species[is_idx].fc_fire
-                else:
-                    # WIND DISTURBANCE  
-                    plot.wind = 3
-                    plot.fire = 0
-                    
-                    # Wind disturbance seedling establishment
-                    for is_idx in range(num_species):
-                        plot.seedling[is_idx] = (
-                            site.species[is_idx].invader +
-                            plot.seedling[is_idx] +
-                            site.species[is_idx].sprout_num * plot.avail_spec[is_idx]
-                        )
-                
-                # All trees die in disturbance
+                        # WIND DISTURBANCE
+                        plot.wind = 3
+
+                        # Wind disturbance seedling establishment
+                        for is_idx in range(num_species):
+                            plot.seedling[is_idx] = (
+                                site.species[is_idx].invader +
+                                plot.seedling[is_idx] +
+                                site.species[is_idx].sprout_num * plot.avail_spec[is_idx]
+                            )
+
+                        plot.fire = 0
+
+                    # Calculate total biomass from all trees before they die
+                    zc = 0.0  # Total carbon
+                    zn = 0.0  # Total nitrogen
+
+                    for tree in plot.trees:
+                        k = tree.species_index
+                        tree.update_tree(site.species[k])  # Update with current species data
+
+                        # Calculate leaf biomass
+                        tree.leaf_biomass_c()
+                        tmp = tree.leaf_bm
+
+                        if site.species[k].conifer:
+                            zc += tree.biomC + tmp * leaf_b
+                            zn += tree.biomC / STEM_C_N + tmp / CON_LEAF_C_N * leaf_b
+                        else:
+                            zc += tree.biomC + tmp
+                            zn += tree.biomC / STEM_C_N + tmp / DEC_LEAF_C_N
+
+                    # Transfer all biomass to soil
+                    site.soil.C_into_A0 += zc
+                    site.soil.N_into_A0 += zn
+                    # Track disturbance-killed biomass for subtraction (Fortran lines 689-693)
+                    biomc += zc
+                    biomn += zn
+                    NPP_loss += zc
+                    NPPn_loss += zn
+
+                    # Mark that seedlings exist for renewal (Fortran line 695)
+                    plot.seedling_number = 1.0
+
+                # All trees dead now (outside numtrees guard, matching Fortran line 700)
                 plot.trees.clear()
                 plot.numtrees = 0
-
-                # Transfer all biomass to soil
-                site.soil.C_into_A0 += zc
-                site.soil.N_into_A0 += zn
-                NPP_loss += zc
-                NPPn_loss += zn
-
-                # Mark that seedlings exist for renewal (Fortran line 695)
-                plot.seedling_number = 1.0
 
             else:
                 # NO PLOT-LEVEL DISTURBANCE - Individual tree mortality
@@ -735,14 +759,6 @@ class ForestModel:
                         site.soil.N_into_A0 += litter_n
                         NPP_loss += litter_c
                         NPPn_loss += litter_n
-
-                        # Track biomass of surviving trees
-                        if site.species[k].conifer:
-                            biomc += tree.biomC + leaf_bm
-                            biomn += tree.biomN + leaf_bm / CON_LEAF_C_N
-                        else:
-                            biomc += tree.biomC
-                            biomn += tree.biomN
                     
                     else:
                         # TREE DIES
@@ -768,10 +784,11 @@ class ForestModel:
                 plot.trees = surviving_trees
                 plot.numtrees = len(surviving_trees)
         
-        # Apply unit conversions and update soil totals
+        # Apply unit conversions and update soil totals (Fortran Model.f90:787-792)
         uconvert = HEC_TO_M2 / params.plotsize / site.numplots
-        site.soil.biomc = biomc * uconvert
-        site.soil.biomn = biomn * uconvert
+        # Subtract disturbance-killed biomass from standing totals set in growth()
+        site.soil.biomc = site.soil.biomc - biomc * uconvert
+        site.soil.biomn = site.soil.biomn - biomn * uconvert
         site.soil.net_prim_prodC = site.soil.net_prim_prodC - NPP_loss * uconvert
         # net_prim_prodN adjustment commented out in Fortran (Model.f90 line 792)
         # site.soil.net_prim_prodN = site.soil.net_prim_prodN - NPPn_loss * uconvert

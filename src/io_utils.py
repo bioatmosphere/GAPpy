@@ -11,7 +11,7 @@ from typing import List, Dict, Tuple, Optional
 from .constants import *
 from .species import SpeciesData
 from .site import SiteData
-from .parameters import Parameters
+from .parameters import Parameters, params
 
 
 def count_records(file_handle, nheaders: int = 0) -> int:
@@ -198,7 +198,7 @@ class GAPpyReader:
             max_diam=float(row['DBHmax']),
             max_ht=float(row['Hmax']),
             wood_bulk_dens=float(row['bulk']),
-            rootdepth=2.0,  # Default since not in original
+            rootdepth=params.rootdepth,  # Global param, matches Fortran Input.f90:709
             leafdiam_a=float(row['D_L']),
             leafarea_c=float(row['L_C']),
             deg_day_min=float(row['DEGDmin']),
@@ -453,7 +453,7 @@ class GAPpyReader:
                 'shade_tol': 3, 'lownutr_tol': 2, 'stress_tol': 2, 'age_tol': 5,
                 'drought_tol': 2, 'flood_tol': 2, 'fire_tol': 2, 'max_age': 300.0,
                 'max_diam': 150.0, 'max_ht': 35.0, 'wood_bulk_dens': 0.68,
-                'rootdepth': 2.0, 'leafdiam_a': 0.1, 'leafarea_c': 50.0,
+                'rootdepth': 0.8, 'leafdiam_a': 0.1, 'leafarea_c': 50.0,
                 'deg_day_min': 1000.0, 'deg_day_opt': 2500.0, 'deg_day_max': 4000.0,
                 'seedling_lg': 0.5, 'invader': 0.0, 'seed_num': 100.0,
                 'sprout_num': 50.0, 'seed_surv': 0.1, 'arfa_0': 0.8, 'g': 0.3,
@@ -465,7 +465,7 @@ class GAPpyReader:
                 'shade_tol': 2, 'lownutr_tol': 3, 'stress_tol': 3, 'age_tol': 4,
                 'drought_tol': 3, 'flood_tol': 1, 'fire_tol': 1, 'max_age': 250.0,
                 'max_diam': 120.0, 'max_ht': 40.0, 'wood_bulk_dens': 0.35,
-                'rootdepth': 1.5, 'leafdiam_a': 0.15, 'leafarea_c': 40.0,
+                'rootdepth': 0.8, 'leafdiam_a': 0.15, 'leafarea_c': 40.0,
                 'deg_day_min': 1200.0, 'deg_day_opt': 2800.0, 'deg_day_max': 4200.0,
                 'seedling_lg': 0.3, 'invader': 0.0, 'seed_num': 200.0,
                 'sprout_num': 0.0, 'seed_surv': 0.05, 'arfa_0': 0.9, 'g': 0.4,

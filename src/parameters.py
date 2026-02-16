@@ -57,7 +57,7 @@ class Parameters:
         
         # Plot parameters
         self.plotsize = 500.0  # square meters (m²) - matches UVAFME2012_runtime.txt
-        self.rootdepth = 2.0  # meters
+        self.rootdepth = 0.8  # meters (matches Fortran Input.f90 default)
         
         # Variables for changes to all site values
         self.new_slope = 0.0
@@ -161,7 +161,7 @@ class Parameters:
             "tree_level_data": False,
             "plot_level_data": False,
             "plotsize": 1.0,
-            "rootdepth": 2.0,
+            "rootdepth": 0.8,
             "fire_level": 0.01,
             "wind_level": 0.05
         }
