@@ -12,7 +12,7 @@ from .plot import PlotData
 from .climate import *
 from .model import ForestModel
 from .io_utils import GAPpyReader, GAPpyWriter
-from .uvafme import GAPpyModel
+from .gappy import GAPpyModel
 
 __all__ = [
     'Parameters',
