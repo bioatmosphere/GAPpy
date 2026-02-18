@@ -218,17 +218,7 @@ class GAPPYModel:
     
     def write_genus_data(self, site, species_present, year):
         """Write genus data."""
-        # Group species by genus
-        # Get species data from the stored list
-        species_data = self._species_data if hasattr(self, '_species_data') else []
-        genera = list(set(species.genus_name for species in species_data))
-        
-        for plot in site.plots:
-            genus_data = plot.sum_over_sg(genera, field='genus')
-            
-            # Write genus-level data (implementation depends on output format)
-            # This is a placeholder for genus-specific output
-            pass
+        self.output_manager.write_genus_data(site, self.species_present, year)
     
     def write_species_data(self, site, species_present, year):
         """Write species data."""
@@ -294,13 +284,21 @@ class GAPPYModel:
             
             # Run the model for this site
             for year in range(self.parameters.numyears + 1):
-                
-                # Run annual cycle
-                self.forest_model.run_annual_cycle(site, year)
-                
-                # Write soil/CN/clim data for last year's trees but after BioGeo
+
+                # Biogeochemical processes first
+                self.forest_model.bio_geo_climate(site, year)
+
+                # Write soil/CN/clim data after BioGeo but before tree dynamics
+                # (matches Fortran UVAFME.f90 lines 99-102)
                 self.write_soil_data(site, year)
                 self.write_site_data(site, year)
+
+                # Tree dynamics
+                self.forest_model.canopy(site, year)
+                self.forest_model.growth(site, year)
+                self.forest_model.mortality(site)
+                self.forest_model.renewal(site)
+                self.forest_model.update_site_statistics(site)
                 
                 # Determine print interval
                 if self.parameters.spinup:

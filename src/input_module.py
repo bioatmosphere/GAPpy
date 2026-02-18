@@ -344,7 +344,7 @@ class InputFileManager:
         """
         site.tmin = np.array(tmin)
         site.tmax = np.array(tmax)
-        site.precip = np.array(prcp)
+        site.precip = np.array(prcp) * MM_TO_CM  # Convert mm to cm (Fortran Site.f90:120)
 
     def read_climate_stds(self, sites: List[SiteData]):
         """

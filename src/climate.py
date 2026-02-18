@@ -28,7 +28,8 @@ def cov365(ta1):
     ta = np.zeros(13)
     vta = np.zeros(381)
     
-    ltmt = [16, 45, 75, 105, 136, 166, 196, 227, 258, 288, 319, 349, 381]
+    # Mid-month anchor days (0-based indices; Fortran uses 1-based: 16,45,...,381)
+    ltmt = [15, 44, 74, 104, 135, 165, 195, 226, 257, 287, 318, 348, 380]
     
     ta[12] = ta1[0]
     ta[0:12] = ta1[0:12]

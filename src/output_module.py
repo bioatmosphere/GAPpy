@@ -65,16 +65,20 @@ class OutputManager:
         # Ensure output directory exists
         os.makedirs(self.output_dir, exist_ok=True)
 
-        # Define output files
+        # Define core output files (always opened)
         output_files = {
             'biom_by_g': 'genus_data.csv',
             'biom_by_s': 'species_data.csv',
             'clim_unit': 'site_data.csv',
             'c_and_n': 'soil_data.csv',
-            'tld': 'tree_data.csv',
-            'pl_biom_by_g': 'plot_genus_data.csv',
-            'pl_biom_by_s': 'plot_species_data.csv'
         }
+
+        # Conditionally add optional files (matching Fortran IO_Utils.f90 lines 164-177)
+        if self.params and self.params.plot_level_data:
+            output_files['pl_biom_by_g'] = 'plot_genus_data.csv'
+            output_files['pl_biom_by_s'] = 'plot_species_data.csv'
+        if self.params and self.params.tree_level_data:
+            output_files['tld'] = 'tree_data.csv'
 
         # Open files and register with CSV writers
         for file_key, filename in output_files.items():
@@ -112,25 +116,37 @@ class OutputManager:
         ]
         csv_write(self.file_handles['biom_by_s'], species_header)
 
-        # Site data header
-        site_header = ['site_id', 'year'] + self.get_site_csv_header()
+        # Site data header (matching Fortran IO_Utils.f90 lines 216-226)
+        site_header = ['siteID', 'year'] + self.get_site_csv_header()
         csv_write(self.file_handles['clim_unit'], site_header)
 
-        # Soil data header
-        soil_header = ['site_id', 'year'] + self.get_soil_csv_header()
+        # Soil data header (matching Fortran IO_Utils.f90 lines 196-213)
+        soil_header = ['siteID', 'year'] + self.get_soil_csv_header()
         csv_write(self.file_handles['c_and_n'], soil_header)
 
-        # Tree data header (if enabled)
-        tree_header = ['site_id', 'year', 'plot', 'tree'] + self.get_tree_csv_header()
-        csv_write(self.file_handles['tld'], tree_header)
+        # Plot-level species data header (matching Fortran IO_Utils.f90 lines 292-312)
+        if self.params and self.params.plot_level_data:
+            pl_species_header = [
+                'siteID', 'year', 'plot', 'genus', 'species',
+                '<0', '0-8', '8-28', '-48',
+                '-68', '-88', '>88',
+                'max_diam', 'max_hgt', 'leaf_area_ind',
+                'basal_area', 'total biomC', 'total biomC_std',
+                'total biomN', 'total biomN_std'
+            ]
+            csv_write(self.file_handles['pl_biom_by_s'], pl_species_header)
+
+        # Tree data header (if enabled, matching Fortran IO_Utils.f90 lines 316-326)
+        # Note: Fortran header omits 'tree' but data includes tree index — we include it
+        if self.params and self.params.tree_level_data:
+            tree_header = ['siteID', 'year', 'plot', 'tree'] + self.get_tree_csv_header()
+            csv_write(self.file_handles['tld'], tree_header)
 
     def get_site_csv_header(self) -> List[str]:
-        """Get header for site data CSV."""
+        """Get header for site data CSV matching Fortran IO_Utils.f90."""
         return [
-            'latitude', 'longitude', 'elevation', 'slope',
-            'leaf_area_ind', 'grow_days', 'deg_days',
-            'flood_days', 'dry_days_upper', 'dry_days_base',
-            'pot_evap_day', 'act_evap_day', 'rain'
+            'rain', 'pet', 'aet', 'grow',
+            'degd', 'dryd_upper', 'dryd_base', 'flood_d'
         ]
 
     def get_soil_csv_header(self) -> List[str]:
@@ -142,10 +158,10 @@ class OutputManager:
         ]
 
     def get_tree_csv_header(self) -> List[str]:
-        """Get header for tree data CSV."""
+        """Get header for tree data CSV matching Fortran IO_Utils.f90 lines 316-326."""
         return [
-            'species_id', 'dbh', 'height', 'biomass_c',
-            'biomass_n', 'leaf_biomass', 'age', 'crown_area'
+            'genus', 'species', 'diam bh', 'forska_height',
+            'leaf biomass', 'stem biomC', 'stem biomN'
         ]
 
     def write_genus_data(self, site: SiteData, species_pres: Groups, year: int):
@@ -401,6 +417,42 @@ class OutputManager:
 
             csv_write(self.file_handles['biom_by_s'], row_data)
 
+        # Write plot-level species data if enabled (matching Fortran Output.f90 lines 409-454)
+        if self.params and self.params.plot_level_data:
+            self._write_plot_species_data(site, species_pres, year, iwmo,
+                                          num_plots, num_species, in_site,
+                                          diam_categories, max_diam, max_ht,
+                                          leaf_bm, basal_area, biomC, biomN)
+
+    def _write_plot_species_data(self, site, species_pres, year, iwmo,
+                                 num_plots, num_species, in_site,
+                                 diam_categories, max_diam, max_ht,
+                                 leaf_bm, basal_area, biomC, biomN):
+        """
+        Write plot-level species data (not aggregated across plots).
+        Matches Fortran Output.f90 lines 409-454.
+        """
+        for ip in range(num_plots):
+            for is_sp in range(num_species):
+                genus_name, species_id = species_pres.spec_names[is_sp]
+                row_data = [iwmo, year, ip + 1, genus_name, species_id]
+
+                if in_site[is_sp]:
+                    row_data.extend([
+                        diam_categories[ip, is_sp, 0], diam_categories[ip, is_sp, 1],
+                        diam_categories[ip, is_sp, 2], diam_categories[ip, is_sp, 3],
+                        diam_categories[ip, is_sp, 4], diam_categories[ip, is_sp, 5],
+                        diam_categories[ip, is_sp, 6],
+                        max_diam[ip, is_sp], max_ht[ip, is_sp],
+                        leaf_bm[ip, is_sp], basal_area[ip, is_sp],
+                        biomC[ip, is_sp], 0.0,
+                        biomN[ip, is_sp], 0.0
+                    ])
+                else:
+                    row_data.extend([RNVALID] * 14)
+
+                csv_write(self.file_handles['pl_biom_by_s'], row_data)
+
     def write_site_data(self, site: SiteData, year: int):
         """
         Write site-level climate and environmental data.
@@ -414,12 +466,12 @@ class OutputManager:
         csv_write(self.file_handles['clim_unit'], row_data)
 
     def extract_site_csv_data(self, site: SiteData) -> List[float]:
-        """Extract site data for CSV output."""
+        """Extract site data for CSV output matching Fortran Site.f90 write_site_csv."""
         return [
-            site.latitude, site.longitude, site.elevation, site.slope,
-            site.leaf_area_ind, site.grow_days, site.deg_days,
-            site.flood_days, site.dry_days_upper_layer, site.dry_days_base_layer,
-            site.pot_evap_day, site.act_evap_day, site.rain
+            site.rain, site.pot_evap_day, site.act_evap_day,
+            site.grow_days, site.deg_days,
+            site.dry_days_upper_layer, site.dry_days_base_layer,
+            site.flood_days
         ]
 
     def write_soil_data(self, site: SiteData, year: int):
@@ -458,12 +510,11 @@ class OutputManager:
                 row_data.extend(self.extract_tree_csv_data(tree))
                 csv_write(self.file_handles['tld'], row_data)
 
-    def extract_tree_csv_data(self, tree) -> List[float]:
-        """Extract tree data for CSV output."""
+    def extract_tree_csv_data(self, tree) -> list:
+        """Extract tree data for CSV output matching Fortran Tree.f90 write_tree_csv."""
         return [
-            tree.species_id, tree.dbh, tree.height,
-            tree.biomass_c, tree.biomass_n, tree.leaf_biomass,
-            tree.age, tree.crown_area
+            tree.genus_name, tree.unique_id, tree.diam_bht,
+            tree.forska_ht, tree.leaf_bm, tree.biomC, tree.biomN
         ]
 
     def close_output_files(self):

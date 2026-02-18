@@ -56,16 +56,38 @@ class ForestModel:
     def calculate_daily_climate(self, site: SiteData, year: int):
         """Calculate daily climate variables from monthly data with stochastic variability."""
         from .random_utils import clim_nrand
+        from . import climate as climate_mod
 
         # Apply stochastic climate fluctuations to monthly values
         tmin_with_var = np.zeros(12)
         tmax_with_var = np.zeros(12)
         precip_with_var = np.zeros(12)
 
+        # Update climate change accumulators (Fortran Model.f90:73-90)
+        if params.linear_cc:
+            if (year >= params.begin_change_year and
+                    year <= params.begin_change_year + params.duration_of_change):
+                climate_mod.accumulated_tmin += params.tmin_change
+                climate_mod.accumulated_tmax += params.tmax_change
+                for m in range(12):
+                    tmpstep1 = site.precip[m] + climate_mod.accumulated_precip[m]
+                    tmpstep2 = tmpstep1 * params.precip_change
+                    climate_mod.accumulated_precip[m] += tmpstep2
+
         # Calculate atmospheric N deposition from monthly precipitation (Fortran Model.f90:124)
         rain_n = 0.0
 
         for month in range(12):
+            # Apply climate change offsets before perturbation (Fortran Model.f90:94-102)
+            if params.linear_cc:
+                tmptmin = site.tmin[month] + climate_mod.accumulated_tmin
+                tmptmax = site.tmax[month] + climate_mod.accumulated_tmax
+                tmpprec = site.precip[month] + climate_mod.accumulated_precip[month]
+            else:
+                tmptmin = site.tmin[month]
+                tmptmax = site.tmax[month]
+                tmpprec = site.precip[month]
+
             # Generate random fluctuation factors
             temp_f = clim_nrand(0.0, 1.0)
             prcp_f = clim_nrand(0.0, 1.0)
@@ -83,9 +105,9 @@ class ForestModel:
                 site.tmax_std = np.zeros(12)
                 site.precip_std = np.zeros(12)
 
-            tmin_with_var[month] = site.tmin[month] + temp_f * site.tmin_std[month]
-            tmax_with_var[month] = site.tmax[month] + temp_f * site.tmax_std[month]
-            precip_with_var[month] = max(site.precip[month] + prcp_f * site.precip_std[month], 0.0)
+            tmin_with_var[month] = tmptmin + temp_f * site.tmin_std[month]
+            tmax_with_var[month] = tmptmax + temp_f * site.tmax_std[month]
+            precip_with_var[month] = max(tmpprec + prcp_f * site.precip_std[month], 0.0)
 
             # Accumulate atmospheric N deposition from monthly precip (matches Fortran)
             rain_n += precip_with_var[month] * PRCP_N
@@ -100,7 +122,7 @@ class ForestModel:
         # Store daily climate for biogeochemistry processing
         site.daily_tmin = daily_tmin
         site.daily_tmax = daily_tmax
-        site.daily_precip = daily_precip / 10.0  # Convert mm to cm
+        site.daily_precip = daily_precip  # Already in cm (site.precip converted in attach_climate)
 
         # Store atmospheric N deposition (calculated from monthly precip)
         site.rain_n = rain_n
@@ -831,9 +853,9 @@ class ForestModel:
                                     species.fc_flood * plot.nutrient[i])
 
                         if species.conifer:
-                            light_factor = species.light_rsp(plot.con_light[0])
+                            light_factor = species.light_rsp(plot.con_light[1])
                         else:
-                            light_factor = species.light_rsp(plot.dec_light[0])
+                            light_factor = species.light_rsp(plot.dec_light[1])
 
                         regrowth[i] = grow_cap * light_factor
                         growmax = max(growmax, regrowth[i])

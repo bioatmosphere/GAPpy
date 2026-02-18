@@ -198,7 +198,7 @@ class GAPpyPlotter:
         # Check for required columns
         required_columns = {
             'species_data': ['year', 'genus', 'species', 'biomass_c', 'biomass_n', 'basal_area'],
-            'site_data': ['year', 'deg_days', 'grow_days', 'rain'],
+            'site_data': ['year', 'degd', 'grow', 'rain'],
             'soil_data': ['year', 'a0c0', 'a0n0', 'ac0', 'an0']
         }
 
@@ -255,7 +255,9 @@ class GAPpyPlotter:
         }).reset_index()
 
         # Add derived metrics
-        summary['cn_ratio'] = summary['biomass_c'] / summary['biomass_n'].replace(0, np.nan)
+        # Note: In model output, biomC is in tC/ha (scaled by plotadj) but biomN is in
+        # a unit 1000x smaller (scaled by plotrenorm*10). Correct by dividing ratio by 1000.
+        summary['cn_ratio'] = summary['biomass_c'] / summary['biomass_n'].replace(0, np.nan) / 1000.0
         summary['biomass_per_tree'] = summary['biomass_c'] / summary['n_trees'].replace(0, np.nan)
 
         return summary
@@ -463,13 +465,13 @@ class GAPpyPlotter:
 
         # Plot 1: Temperature-related variables
         ax1 = axes[0, 0]
-        ax1.plot(self.site_data['year'], self.site_data['deg_days'],
+        ax1.plot(self.site_data['year'], self.site_data['degd'],
                 linewidth=2, color=CLIMATE_COLORS['temperature'],
                 label='Degree Days')
 
-        if 'grow_days' in self.site_data.columns:
+        if 'grow' in self.site_data.columns:
             ax1_twin = ax1.twinx()
-            ax1_twin.plot(self.site_data['year'], self.site_data['grow_days'],
+            ax1_twin.plot(self.site_data['year'], self.site_data['grow'],
                          linewidth=2, color='#2CA02C', label='Growing Days')
             ax1_twin.set_ylabel('Growing Days', color='#2CA02C')
             ax1_twin.tick_params(axis='y', labelcolor='#2CA02C')
@@ -487,7 +489,7 @@ class GAPpyPlotter:
                 color=CLIMATE_COLORS['water'])
 
         # Add other water variables if present
-        water_vars = ['pot_evap', 'act_evap', 'runoff']
+        water_vars = ['pet', 'aet', 'runoff']
         colors = ['#FFA500', '#E74C3C', '#9B59B6']
 
         for var, color in zip(water_vars, colors):
@@ -504,7 +506,7 @@ class GAPpyPlotter:
 
         # Plot 3: Drought stress indicators
         ax3 = axes[1, 0]
-        drought_vars = ['dry_days_upper', 'dry_days_base', 'drought_days']
+        drought_vars = ['dryd_upper', 'dryd_base', 'drought_days']
         drought_colors = ['#DC143C', '#FF8C00', '#FFD700']
         drought_styles = ['-', '--', '-.']
         drought_markers = ['o', 's', '^']
@@ -521,7 +523,7 @@ class GAPpyPlotter:
 
         if not drought_found:
             # Create estimated drought stress from temperature and precipitation
-            drought_estimate = np.maximum(0, self.site_data['deg_days'] / 50 - self.site_data['rain'] * 10)
+            drought_estimate = np.maximum(0, self.site_data['degd'] / 50 - self.site_data['rain'] * 10)
             ax3.plot(self.site_data['year'], drought_estimate,
                     linewidth=2, label='Estimated Drought Stress',
                     color=CLIMATE_COLORS['stress'], alpha=0.6)
@@ -534,7 +536,7 @@ class GAPpyPlotter:
 
         # Plot 4: Additional environmental variables
         ax4 = axes[1, 1]
-        env_vars = ['flood_days', 'wind_days', 'freeze_days']
+        env_vars = ['flood_d', 'wind_days', 'freeze_days']
         env_colors = ['#1E90FF', '#9370DB', '#708090']
         env_styles = ['-', '--', '-.']
         env_markers = ['o', 's', 'D']
@@ -637,20 +639,20 @@ class GAPpyPlotter:
 
         # Environmental stress indicators
         ax5 = fig.add_subplot(gs[1, 2:])
-        if 'dry_days_upper' in self.site_data.columns:
-            ax5.plot(self.site_data['year'], self.site_data['dry_days_upper'],
+        if 'dryd_upper' in self.site_data.columns:
+            ax5.plot(self.site_data['year'], self.site_data['dryd_upper'],
                     linewidth=3, label='Drought Days', color='#DC143C',
                     linestyle='-', marker='o', markevery=max(1, len(self.site_data) // 20),
                     markersize=5, alpha=0.9)
-        if 'flood_days' in self.site_data.columns:
-            ax5.plot(self.site_data['year'], self.site_data['flood_days'],
+        if 'flood_d' in self.site_data.columns:
+            ax5.plot(self.site_data['year'], self.site_data['flood_d'],
                     linewidth=3, label='Flood Days', color='#1E90FF',
                     linestyle='--', marker='s', markevery=max(1, len(self.site_data) // 20),
                     markersize=5, alpha=0.9)
 
         # If no stress data, create estimate
-        if 'dry_days_upper' not in self.site_data.columns and 'flood_days' not in self.site_data.columns:
-            stress_estimate = self.site_data['deg_days'] / 100
+        if 'dryd_upper' not in self.site_data.columns and 'flood_d' not in self.site_data.columns:
+            stress_estimate = self.site_data['degd'] / 100
             ax5.plot(self.site_data['year'], stress_estimate,
                     linewidth=2, label='Temperature Stress',
                     color=CLIMATE_COLORS['stress'])
@@ -676,8 +678,9 @@ class GAPpyPlotter:
 
         # Ecosystem C:N ratio
         ax7 = fig.add_subplot(gs[2, 2:])
+        # biomC is in tC/ha, biomN is 1000x smaller units; correct for unit mismatch
         total_biomass_n = species_summary.groupby('year')['biomass_n'].sum()
-        ecosystem_cn = total_biomass / total_biomass_n.replace(0, np.nan)
+        ecosystem_cn = total_biomass / total_biomass_n.replace(0, np.nan) / 1000.0
         ecosystem_cn = ecosystem_cn.dropna()
         if len(ecosystem_cn) > 0:
             ax7.plot(ecosystem_cn.index, ecosystem_cn.values,
@@ -736,7 +739,7 @@ class GAPpyPlotter:
         if final_trees > 0:
             print(f"  Average biomass per tree: {final_biomass/final_trees:.3f} kg C/tree")
         if final_biomass_n > 0:
-            print(f"  Forest C:N ratio: {final_biomass/final_biomass_n:.1f}")
+            print(f"  Forest C:N ratio: {final_biomass/final_biomass_n/1000.0:.1f}")
 
         # Soil metrics
         final_soil = self.soil_data[self.soil_data['year'] == self.soil_data['year'].max()].iloc[0]
@@ -752,7 +755,7 @@ class GAPpyPlotter:
         # Climate metrics
         final_site = self.site_data[self.site_data['year'] == self.site_data['year'].max()].iloc[0]
         print(f"\nCLIMATE METRICS (Final Year):")
-        print(f"  Degree days: {final_site['deg_days']:.0f}")
+        print(f"  Degree days: {final_site['degd']:.0f}")
         print(f"  Annual rainfall: {final_site['rain']:.2f} m")
 
         # Change over time
