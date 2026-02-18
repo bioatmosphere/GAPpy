@@ -15,7 +15,7 @@ try:
     import sys
     import os
     # Add integration module to path
-    integration_path = os.path.join(os.path.dirname(__file__), '../integration')
+    integration_path = os.path.join(os.path.dirname(__file__), '../../../integration')
     if integration_path not in sys.path:
         sys.path.insert(0, integration_path)
     from dement_adapter import DEMENTpyAdapter
