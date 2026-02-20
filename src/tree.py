@@ -211,15 +211,7 @@ class TreeData(SpeciesData):
         
         rand_val = urand()
         mort_prob = check[k] / agemax
-        
-        # DEBUG: Print survival details for first few trees
-        # if hasattr(self, '_debug_count') and self._debug_count < 3:
-        #     print(f"DEBUG age_survival: age_tol={self.age_tol}, k={k}, agemax={agemax}, check[k]={check[k]}, mort_prob={mort_prob:.4f}, rand={rand_val:.4f}")
-        #     self._debug_count += 1
-        # elif not hasattr(self, '_debug_count'):
-        #     self._debug_count = 1
-        #     print(f"DEBUG age_survival: age_tol={self.age_tol}, k={k}, agemax={agemax}, check[k]={check[k]}, mort_prob={mort_prob:.4f}, rand={rand_val:.4f}")
-        
+
         if rand_val < mort_prob:
             return False
         else:
@@ -231,15 +223,7 @@ class TreeData(SpeciesData):
         
         k = max(0, min(len(check) - 1, self.stress_tol - 1))  # Clamp to valid range
         rand_val = urand()
-        
-        # DEBUG: Print survival details for first few trees
-        # if hasattr(self, '_debug_growth_count') and self._debug_growth_count < 3:
-        #     print(f"DEBUG growth_survival: stress_tol={self.stress_tol}, k={k}, check[k]={check[k]}, mort_marker={self.mort_marker}, rand={rand_val:.4f}")
-        #     self._debug_growth_count += 1
-        # elif not hasattr(self, '_debug_growth_count'):
-        #     self._debug_growth_count = 1
-        #     print(f"DEBUG growth_survival: stress_tol={self.stress_tol}, k={k}, check[k]={check[k]}, mort_marker={self.mort_marker}, rand={rand_val:.4f}")
-        
+
         if self.mort_marker and rand_val < check[k]:
             return False
         else:

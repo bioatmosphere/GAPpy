@@ -283,7 +283,7 @@ class ForestModel:
         num_species = len(site.species)
 
         # Debug for year 0
-        debug_canopy = (year == 0 and hasattr(self, '_debug_year0') and self._debug_year0)
+        debug_canopy = (params.debug and year == 0)
 
         for plot_idx, plot in enumerate(site.plots):
             ntrees = len(plot.trees)
@@ -365,12 +365,6 @@ class ForestModel:
         """Process tree growth - complete Fortran translation."""
         from .constants import HEC_TO_M2, STEM_C_N, CON_LEAF_C_N, DEC_LEAF_C_N, CON_LEAF_RATIO
 
-        # Enable debug output for year 0
-        if year == 0 and not hasattr(self, '_debug_year0'):
-            self._debug_year0 = True
-        elif year != 0:
-            self._debug_year0 = False
-
         num_species = len(site.species)
         
         # Initialize soil carbon and nitrogen tracking
@@ -404,7 +398,7 @@ class ForestModel:
                 kh = [0] * ntrees   # Tree height index
                 
                 # FIRST TREE LOOP: Initial calculations and N requirements
-                debug_first_tree = True  # Debug flag for first tree only
+                debug_first_tree = params.debug and year == 0
                 for it, tree in enumerate(plot.trees):
                     k = tree.species_index
                     tree.update_tree(site.species[k])  # Update tree with current species data
@@ -440,7 +434,7 @@ class ForestModel:
                     N_stress[it] = tree.env_stress(canopy_shade)
 
                     # Debug first tree in year 0
-                    if debug_first_tree and hasattr(self, '_debug_year0') and self._debug_year0:
+                    if debug_first_tree:
                         print(f"\n=== DEBUG First Tree (Loop 1) ===")
                         print(f"  Species: {tree.genus_name} (k={k})")
                         print(f"  Initial DBH: {diam[it]:.2f} cm")
@@ -482,7 +476,7 @@ class ForestModel:
                 N_supply_demand = site.soil.avail_N / N_req
 
                 # Debug nitrogen in year 0
-                if hasattr(self, '_debug_year0') and self._debug_year0:
+                if params.debug and year == 0:
                     print(f"\n=== DEBUG Nitrogen (between loops) ===")
                     print(f"  Available N: {site.soil.avail_N:.6f} tn/ha")
                     print(f"  Required N: {N_req:.6f} tn/ha")
@@ -494,11 +488,11 @@ class ForestModel:
                 N_supply_demand = min(N_supply_demand, 1.0)
                 for i in range(num_species):
                     plot.nutrient[i] = site.species[i].poor_soil_rsp(N_supply_demand)
-                    if hasattr(self, '_debug_year0') and self._debug_year0 and i < 3:
+                    if params.debug and year == 0 and i < 3:
                         print(f"  Species {i} ({site.species[i].genus_name}): nutrient = {plot.nutrient[i]:.6f}")
                 
                 # SECOND TREE LOOP: Final diameter increments and biomass
-                debug_first_tree2 = True  # Debug flag for first tree in loop 2
+                debug_first_tree2 = params.debug and year == 0
                 for it, tree in enumerate(plot.trees):
                     k = tree.species_index
                     tree.update_tree(site.species[k])  # Update tree with current species data
@@ -514,7 +508,7 @@ class ForestModel:
                     pp = min(site.species[k].max_diam / site.species[k].max_age * 0.1, growth_thresh)
 
                     # Debug first tree in year 0
-                    if debug_first_tree2 and hasattr(self, '_debug_year0') and self._debug_year0:
+                    if debug_first_tree2:
                         print(f"\n=== DEBUG First Tree (Loop 2 - Mortality Check) ===")
                         print(f"  N_stress[it]: {N_stress[it]:.6f}")
                         print(f"  plot.nutrient[k]: {plot.nutrient[k]:.6f}")
@@ -1038,23 +1032,18 @@ class ForestModel:
                     
                     plot.add_tree(tree)
                     
-            live_count = len([t for t in plot.trees if not t.mort_marker])
-            print(f"  Initialized plot with {len(plot.trees)} trees ({live_count} alive)")
+            if params.debug:
+                live_count = len([t for t in plot.trees if not t.mort_marker])
+                print(f"  Initialized plot with {len(plot.trees)} trees ({live_count} alive)")
     
     def run_annual_cycle(self, site: SiteData, year: int):
         """Run complete annual cycle for a site."""
-        # Enable debug for year 0
-        if year == 0 and not hasattr(self, '_debug_year0'):
-            self._debug_year0 = True
-        elif year != 0:
-            self._debug_year0 = False
-
         # Biogeochemical processes
         self.bio_geo_climate(site, year)
 
         # Forest dynamics
-        self.canopy(site, year)  # Pass year for debugging
-        self.growth(site, year)  # Pass year for debugging
+        self.canopy(site, year)
+        self.growth(site, year)
         self.mortality(site)
         self.renewal(site)
         

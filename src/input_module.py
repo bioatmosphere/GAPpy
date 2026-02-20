@@ -421,7 +421,8 @@ class InputFileManager:
                 sample_row = next(reader)
                 f.seek(0)
                 reader = csv.DictReader(f)
-                print(f"Available CSV columns: {list(sample_row.keys())}")
+                if self.parameters.debug:
+                    print(f"Available CSV columns: {list(sample_row.keys())}")
 
                 for row in reader:
                     species = SpeciesData()
@@ -431,8 +432,7 @@ class InputFileManager:
                         try:
                             if key in row and row[key].strip():
                                 val = cast_func(row[key])
-                                # Debug D_L reading
-                                if key == 'D_L' and len(species_data) < 2:
+                                if self.parameters.debug and key == 'D_L' and len(species_data) < 2:
                                     print(f"DEBUG: Reading D_L for species {len(species_data)+1}: raw='{row[key]}', parsed={val}")
                                 return val
                             else:
@@ -478,8 +478,7 @@ class InputFileManager:
                         conifer=(safe_get('evergreen', 0, int) == 1)  # 'evergreen' maps to conifer
                     )
 
-                    # Debug: Print first two species leafdiam_a
-                    if len(species_data) < 2:
+                    if self.parameters.debug and len(species_data) < 2:
                         print(f"DEBUG: Species {len(species_data)+1} ({species.genus_name}) initialized with leafdiam_a={species.leafdiam_a}")
 
                     species_data.append(species)
