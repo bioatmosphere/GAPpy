@@ -27,10 +27,10 @@
   "decr_tmin_by": 0.0,
   "decr_tmax_by": 0.0,
   "decr_precip_by": 0.0,
-  "fire_level": 0.0,
-  "wind_level": 0.0,
-  "new_slope": 0.0,
-  "SA_field_cap": 0.0,
+  "fire_level": -999.0,
+  "wind_level": -999.0,
+  "new_slope": -999.0,
+  "SA_field_cap": -999.0,
   "A0_level_C": -999.0,
   "A0_level_N": -999.0
 }

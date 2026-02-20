@@ -118,14 +118,19 @@ class GAPpyModel:
     
     def initialize_sitelist(self):
         """Initialize site list and species data."""
+        from .sitelist import apply_site_adjustments
         for site in self.sites:
+            # Apply site adjustments (Fortran Sitelist.f90:33-61)
+            # Must happen BEFORE attach_species so soil params are scaled
+            apply_site_adjustments(site, self.parameters)
+
             # Attach species to site
             site.attach_species(self._species_data)
-            
+
             # Initialize plots for each site
             site.numplots = self.parameters.numplots
             site.plots = []
-            
+
             for plot_id in range(self.parameters.numplots):
                 plot = PlotData()
                 plot.initialize_plot(site.species, self.parameters.maxtrees, self.parameters.maxheight)

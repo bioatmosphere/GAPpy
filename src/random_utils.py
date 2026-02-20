@@ -98,36 +98,57 @@ class RandomState:
         self.climate_rng = ClimateRNG()  # Use custom LCG for climate
         self.fixed_seed = False
         self.same_climate = True
-        
+        self._climate_first = True  # Tracks first call (Fortran Random.f90:280)
+        self._site_first = True  # Tracks first call for non-fixed seed (Fortran Random.f90:221)
+
     def set_site_rng_seed(self, fixed_seed: bool = False, seed: Optional[int] = None):
         """Set random number generator seed for site-specific calculations."""
         self.fixed_seed = fixed_seed
-        
+
         if fixed_seed:
+            # Reset seed for each site (Fortran Random.f90:255-265)
             if seed is None:
-                seed = 42  # Default fixed seed
+                seed = 2345678  # Default fixed seed (Fortran Random.f90:220)
             self.site_rng.seed(seed)
+            # Fortran draws one throwaway random number after seeding (Random.f90:266)
+            self.site_rng.random()
         else:
-            self.site_rng.seed()  # Use system time
+            # Only seed once on first call, then let RNG evolve (Fortran Random.f90:234-253)
+            if self._site_first:
+                if seed is not None:
+                    self.site_rng.seed(seed)
+                else:
+                    self.site_rng.seed()  # Use system time
+                self._site_first = False
     
     def set_climate_rng_seed(self, same_climate: bool = True, fixed_seed: bool = False, seed: Optional[int] = None):
         """
         Set random number generator seed for climate calculations.
         Translated from Random.f90 set_climate_rng_seed (lines 273-326).
+
+        Fortran logic:
+        - fixed_seed=False, first call: set clim_seed, first=False, reset_clim=False
+        - fixed_seed=False, subsequent + same_climate: just set reset_clim=True
+        - fixed_seed=True: always set clim_seed; if same_climate, reset_clim=True
         """
         self.same_climate = same_climate
 
-        if fixed_seed:
-            if seed is None:
-                seed = 2345678  # Default seed from Fortran (line 278)
-            self.climate_rng.seed(seed)
-            if same_climate:
+        if not fixed_seed:
+            if self._climate_first:
+                if seed is None:
+                    import time
+                    seed = int(time.time() * 1000) % 1000000
+                self.climate_rng.clim_seed = seed
+                self.climate_rng.first = True
+                self.climate_rng.reset_clim = False
+                self._climate_first = False
+            elif same_climate:
                 self.climate_rng.reset_clim = True
         else:
             if seed is None:
-                import time
-                seed = int(time.time() * 1000) % 1000000  # Use milliseconds
-            self.climate_rng.seed(seed)
+                seed = 2345678  # Default seed from Fortran (line 278)
+            self.climate_rng.clim_seed = seed
+            # Fortran does NOT set first here (Random.f90:310-322)
             if same_climate:
                 self.climate_rng.reset_clim = True
 
@@ -148,10 +169,14 @@ class RandomState:
         Translated from Random.f90 nrand (lines 56-101).
         """
         # Box-Muller polar method (Fortran lines 79-95)
+        # When seed provided, create ONE temp RNG and draw sequentially
+        # (not a new RNG per call, which produces identical x1/x2)
+        if seed is not None:
+            temp_rng = random.Random(seed)
         while True:
             if seed is not None:
-                x1 = self.urand(-1.0, 1.0, seed)
-                x2 = self.urand(-1.0, 1.0, seed)
+                x1 = temp_rng.uniform(-1.0, 1.0)
+                x2 = temp_rng.uniform(-1.0, 1.0)
             else:
                 x1 = self.urand(-1.0, 1.0)
                 x2 = self.urand(-1.0, 1.0)

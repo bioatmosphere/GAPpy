@@ -7,6 +7,7 @@ the attachment of species data to sites.
 Translated from Sitelist.f90
 """
 
+import copy
 from typing import List, Optional, Tuple
 import csv
 import os
@@ -54,6 +55,10 @@ def initialize_sitelist(sites: List[SiteData], species_present: Groups,
             # Apply site-specific adjustments based on global parameters
             apply_site_adjustments(site)
 
+    # Read altitude list (Fortran Sitelist.f90:64)
+    from .input_module import input_manager
+    input_manager.read_altitudes(sites)
+
     # Initialize species lists for each site
     initialize_spec_list(sites, species_file, range_file)
 
@@ -70,7 +75,7 @@ def initialize_sitelist(sites: List[SiteData], species_present: Groups,
     print(f"Sitelist initialization complete. Species present: {species_present.numspecies}")
 
 
-def apply_site_adjustments(site: SiteData) -> None:
+def apply_site_adjustments(site: SiteData, params=None) -> None:
     """
     Apply standard adjustments to site parameters.
 
@@ -79,10 +84,11 @@ def apply_site_adjustments(site: SiteData) -> None:
 
     Args:
         site: Site data to adjust
+        params: Parameters instance (uses global singleton if not provided)
     """
-    # Create parameters instance to access global overrides
-    from .parameters import Parameters
-    params = Parameters()
+    if params is None:
+        from .parameters import params as default_params
+        params = default_params
 
     # Apply global parameter overrides (if set to non-default values)
     if params.new_slope != RNVALID:
@@ -241,14 +247,14 @@ def attach_species_to_site(site: SiteData, species_data: List[SpeciesData],
         species_ids: Optional list of species IDs to include (if None, include all)
     """
     if species_ids is None:
-        # Add all species to this site
-        site.species = species_data.copy()
+        # Add all species to this site (deep copy for independent objects)
+        site.species = copy.deepcopy(species_data)
     else:
-        # Add only specified species
+        # Add only specified species (deep copy each)
         site.species = []
         for species in species_data:
             if species.unique_id in species_ids:
-                site.species.append(species)
+                site.species.append(copy.deepcopy(species))
 
     print(f"Site {site.site_id}: attached {len(site.species)} species")
 

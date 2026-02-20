@@ -6,6 +6,7 @@ Translated from Climate.f90
 import math
 import numpy as np
 from .constants import *
+from .random_utils import set_climate_rng_seed
 
 # Global climate variables
 accumulated_tmin = 0.0
@@ -15,9 +16,8 @@ accumulated_precip = np.zeros(12)
 def set_site_climate(same_climate, fixed_seed):
     """Set climate for a site."""
     global accumulated_tmin, accumulated_tmax, accumulated_precip
-    
-    # This would call set_climate_rng_seed in the original
-    # For now, we'll implement basic functionality
+
+    set_climate_rng_seed(same_climate, fixed_seed)
     accumulated_tmin = 0.0
     accumulated_tmax = 0.0
     accumulated_precip = np.zeros(12)
@@ -65,8 +65,8 @@ def cov365a(ta, uniform_func):
         inum = ik
         
         for i in range(ltmt[k]):
-            yxdr = uniform_func()
             if inum > 0:
+                yxdr = uniform_func()
                 if yxdr <= ss:
                     vta[md] = rr
                     inum -= 1

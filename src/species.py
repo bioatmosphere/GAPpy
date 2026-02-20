@@ -181,6 +181,7 @@ class SpeciesData:
         Index 3 yields the highest response at low fertility.
         """
         nrc = max(1, min(3, self.lownutr_tol))
+        nrc = 4 - nrc  # Invert tolerance class (Fortran Species.f90:235)
         sf = max(0.0, min(1.0, n_avail))
 
         fert_c1 = [-0.6274, -0.2352, 0.2133]
@@ -205,6 +206,7 @@ def poor_soil_rsp(sf, nrc):
     fert_c3 = [-1.994, -1.550, -1.014]
 
     nrc = max(1, min(3, nrc))
+    nrc = 4 - nrc  # Invert tolerance class (Fortran Species.f90:235)
     sf = min(sf, 1.0)
 
     fpoor = fert_c1[nrc - 1] + fert_c2[nrc - 1] * sf + fert_c3[nrc - 1] * sf**2

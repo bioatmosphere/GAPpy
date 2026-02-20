@@ -73,7 +73,8 @@ class InputFileManager:
             'sites': os.path.join(input_base_path, 'sites.csv'),
             'range': os.path.join(input_base_path, 'range.csv'),  # Optional
             'altitude': os.path.join(input_base_path, 'altitude.csv'),  # Optional
-            'climate_std': os.path.join(input_base_path, 'climate_std.csv')  # Optional
+            'climate_std': os.path.join(input_base_path, 'climate_std.csv'),  # Optional
+            'gcm_climate': os.path.join(input_base_path, 'climate_GCM.csv')  # Optional
         }
 
     def initialize_parameters(self):
@@ -142,7 +143,7 @@ class InputFileManager:
                     fatal_error("Inconsistent input for climate change: 0 years duration")
 
                 # Check if any changes are specified
-                if (self.parameters.incr_tmin_by == 0.0 and self.parameters.decr_tmax_by == 0.0 and
+                if (self.parameters.incr_tmin_by == 0.0 and self.parameters.incr_tmax_by == 0.0 and
                     self.parameters.decr_tmin_by == 0.0 and self.parameters.decr_tmax_by == 0.0 and
                     self.parameters.incr_precip_by == 0.0 and self.parameters.decr_precip_by == 0.0):
                     fatal_error("Inconsistent climate change: no temp or precip changes")
@@ -467,12 +468,12 @@ class InputFileManager:
                         deg_day_min=safe_get('DEGDmin', 500.0, float),  # 'DEGDmin' maps to deg_day_min
                         deg_day_opt=safe_get('DEGDoptimum', 1200.0, float),  # 'DEGDoptimum' maps to deg_day_opt
                         deg_day_max=safe_get('DEGDmax', 2500.0, float),  # 'DEGDmax' maps to deg_day_max
-                        seedling_lg=safe_get('s', 0.8, float),  # 's' is seedling growth parameter (arfa_0 shape param)
+                        arfa_0=safe_get('s', 0.8, float),  # CSV col 's' = arfa_0 (Fortran Input.f90:677)
                         invader=safe_get('invader', 0.1, float),  # 'invader' maps to invader
                         seed_num=safe_get('seed', 100.0, float),  # 'seed' maps to seed_num
                         sprout_num=safe_get('sprout', 50.0, float),  # 'sprout' maps to sprout_num
-                        seed_surv=safe_get('NDS', 0.3, float),  # 'NDS' (seedling survival) maps to seed_surv
-                        arfa_0=safe_get('NDE', 0.8, float),  # 'NDE' maps to arfa_0
+                        seed_surv=safe_get('NDE', 0.3, float),  # CSV col 'NDE' = seed_surv (Fortran Input.f90:696)
+                        seedling_lg=safe_get('NDS', 0.8, float),  # CSV col 'NDS' = seedling_lg (Fortran Input.f90:697)
                         g=safe_get('g', 0.6, float),  # 'g' maps to g
                         conifer=(safe_get('evergreen', 0, int) == 1)  # 'evergreen' maps to conifer
                     )
@@ -488,6 +489,91 @@ class InputFileManager:
 
         print(f'Species data initialized. Total read in: {len(species_data)}')
         return species_data
+
+    def read_altitudes(self, sites: List[SiteData]):
+        """
+        Read altitude data and attach to sites.
+        Translated from Input.f90 read_altitudes (lines 217-261).
+
+        CSV format: site_id, site_name, lat, long, altitude
+        If file is missing or empty, altitudes remain at RNVALID (no adjustment).
+        """
+        alt_file = self.filenames.get('altitude')
+        if not alt_file or not os.path.exists(alt_file):
+            # No altitude file -- leave altitudes at RNVALID (Fortran line 258)
+            for site in sites:
+                site.altitude = RNVALID
+            return
+
+        try:
+            with open(alt_file, 'r') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            if len(rows) == 0:
+                warning("Error in altitude file, ignoring")
+                for site in sites:
+                    site.altitude = RNVALID
+                return
+
+            for row in rows:
+                site_id = int(row['site_id'])
+                altitude = float(row['altitude'])
+                for site in sites:
+                    if site.site_id == site_id:
+                        site.altitude = altitude
+                        break
+
+        except Exception as e:
+            warning(f"Error reading altitude file: {e}, leaving altitudes unchanged")
+            for site in sites:
+                site.altitude = RNVALID
+
+    def read_gcm_climate(self, gcm_year: int, start_gcm: int, site: SiteData):
+        """
+        Read GCM climate data for a specific year and site.
+        Translated from Input.f90 read_gcm_climate (lines 489-539).
+
+        CSV format: site_id, lat, long, year, tmin_jan..dec, tmax_jan..dec, prcp_jan..dec
+
+        Args:
+            gcm_year: The GCM year to read
+            start_gcm: The starting GCM year (triggers file rewind)
+            site: The site to attach climate data to
+        """
+        gcm_file = self.filenames.get('gcm_climate')
+        if not gcm_file or not os.path.exists(gcm_file):
+            warning(f"GCM climate file not found")
+            site.site_wmo = RNVALID
+            return
+
+        tmin = np.full(NTEMPS, RNVALID)
+        tmax = np.full(NTEMPS, RNVALID)
+        prcp = np.full(NTEMPS, RNVALID)
+
+        months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                  'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+        try:
+            with open(gcm_file, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    row_site_id = int(row['site_id'])
+                    row_year = int(float(row['year']))
+                    if row_site_id == site.site_id and row_year == gcm_year:
+                        tmin = np.array([float(row[f'tmin_{m}']) for m in months])
+                        tmax = np.array([float(row[f'tmax_{m}']) for m in months])
+                        prcp = np.array([float(row[f'prcp_{m}']) for m in months])
+                        self.attach_climate(site, tmin.tolist(), tmax.tolist(), prcp.tolist())
+                        return
+
+        except Exception as e:
+            warning(f"Error reading GCM climate file: {e}")
+
+        # No matching data found
+        if np.any(tmin == RNVALID) or np.any(tmax == RNVALID) or np.any(prcp == RNVALID):
+            print(f'No climate data for site number {site.site_id}')
+            site.site_wmo = RNVALID
 
 
 # Global input manager instance

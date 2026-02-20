@@ -64,6 +64,7 @@ class ForestModel:
         precip_with_var = np.zeros(12)
 
         # Update climate change accumulators (Fortran Model.f90:73-90)
+        # Fortran checks linear_cc first, then use_gcm as else-if
         if params.linear_cc:
             if (year >= params.begin_change_year and
                     year <= params.begin_change_year + params.duration_of_change):
@@ -73,6 +74,11 @@ class ForestModel:
                     tmpstep1 = site.precip[m] + climate_mod.accumulated_precip[m]
                     tmpstep2 = tmpstep1 * params.precip_change
                     climate_mod.accumulated_precip[m] += tmpstep2
+        elif params.use_gcm:
+            gcm_year = params.start_gcm + year - params.begin_change_year
+            if gcm_year >= params.start_gcm and gcm_year <= params.end_gcm:
+                from .input_module import input_manager
+                input_manager.read_gcm_climate(gcm_year, params.start_gcm, site)
 
         # Calculate atmospheric N deposition from monthly precipitation (Fortran Model.f90:124)
         rain_n = 0.0
@@ -129,54 +135,6 @@ class ForestModel:
 
         # Store total annual rainfall as sum of monthly precip (matches Fortran Model.f90:123,231)
         site.rain = np.sum(precip_with_var)
-    
-    def calculate_degree_days(self, site: SiteData):
-        """Calculate growing degree days."""
-        # Base temperature for growing degree days
-        base_temp = 5.0
-        
-        # Calculate from monthly data
-        monthly_avg = (site.tmin + site.tmax) / 2.0
-        
-        # DEBUG: Print climate data for the first site
-        if not hasattr(self, '_debug_climate_printed'):
-            print(f"DEBUG climate: tmin={site.tmin}, tmax={site.tmax}")
-            print(f"DEBUG climate: monthly_avg={monthly_avg}")
-            self._debug_climate_printed = True
-        
-        # Sum degree days above base temperature
-        degree_days = np.sum(np.maximum(monthly_avg - base_temp, 0) * 30)  # 30 days/month
-        site.deg_days = degree_days
-        
-        # Calculate growing days (days above base temperature)
-        site.grow_days = np.sum(monthly_avg > base_temp) * 30
-        
-        # DEBUG: Print degree days calculation
-        if hasattr(self, '_debug_climate_printed') and not hasattr(self, '_debug_degdays_printed'):
-            print(f"DEBUG degdays: degree_days={degree_days}, grow_days={site.grow_days}")
-            self._debug_degdays_printed = True
-    
-    def calculate_potential_evapotranspiration(self, site: SiteData):
-        """Calculate potential evapotranspiration using Hargreaves method."""
-        # Use middle of year for radiation calculation
-        julian_day = 180  # Mid-year approximation
-        
-        # Calculate extraterrestrial radiation
-        erad, daylength, exradmx = ex_rad(julian_day, site.latitude)
-        
-        # Calculate monthly potential evapotranspiration
-        monthly_pet = []
-        for month in range(12):
-            tmin = site.tmin[month]
-            tmax = site.tmax[month]
-            tavg = (tmin + tmax) / 2.0
-            
-            # Hargreaves equation
-            pet = hargrea(tmin, tmax, tavg, erad)
-            monthly_pet.append(pet)
-        
-        # Average daily potential evapotranspiration
-        site.pot_evap_day = np.mean(monthly_pet)
     
     def update_species_climate_responses(self, site: SiteData):
         """Update species climate response factors.
@@ -255,9 +213,11 @@ class ForestModel:
 
             # Update canopy water content (critical!)
             site.leaf_area_w0 = water_results[9]  # Updated lai_w0
+            # Propagate clamped lai back (Fortran intent(inout) on lai)
+            site.leaf_area_ind = water_results[10]
 
             # Process soil decomposition (Fortran Model.f90:178-180)
-            avail_N, C_resp = site.soil.soil_decomp(
+            avail_N, C_resp, aow0_scaled_by_max = site.soil.soil_decomp(
                 0.0, 0.0, 0.0, 0.0,
                 day_temp, day_precip, aow0_scaled_by_max, saw0_scaled_by_fc,
                 sbw0_scaled_by_max
@@ -343,9 +303,6 @@ class ForestModel:
                 
                 # Calculate LAI distribution for each tree
                 for tree in plot.trees:
-                    if tree.mort_marker:
-                        continue
-                        
                     forht = tree.forska_ht
                     canht = tree.canopy_ht
                     
@@ -358,8 +315,10 @@ class ForestModel:
                     lvd_adj = tlai / float(jtmp)
                     
                     # Add LAI to appropriate height layers
-                    canht_int = max(0, min(int(canht), maxheight - 1))
-                    forht_int = max(0, min(int(forht), maxheight - 1))
+                    # Fortran 1-based: int(canht) maps to array(int(canht))
+                    # Python 0-based: subtract 1 to get same physical layer
+                    canht_int = max(0, min(int(canht) - 1, maxheight - 1))
+                    forht_int = max(0, min(int(forht) - 1, maxheight - 1))
                     
                     if tree.conifer:
                         # Conifers contribute equally to both light arrays
@@ -447,9 +406,6 @@ class ForestModel:
                 # FIRST TREE LOOP: Initial calculations and N requirements
                 debug_first_tree = True  # Debug flag for first tree only
                 for it, tree in enumerate(plot.trees):
-                    if tree.mort_marker:
-                        continue
-
                     k = tree.species_index
                     tree.update_tree(site.species[k])  # Update tree with current species data
 
@@ -464,8 +420,9 @@ class ForestModel:
                         plot.avail_spec[k] = 1.0
                     
                     # Height indices for light calculations
-                    khc[it] = min(int(canht), len(plot.con_light) - 1)
-                    kh[it] = min(int(forht[it]), len(plot.con_light) - 1)
+                    # Fortran 1-based to Python 0-based: subtract 1
+                    khc[it] = max(0, min(int(canht) - 1, len(plot.con_light) - 1))
+                    kh[it] = max(0, min(int(forht[it]) - 1, len(plot.con_light) - 1))
                     
                     # Calculate leaf biomass and max growth
                     tree.leaf_biomass_c()
@@ -532,6 +489,9 @@ class ForestModel:
                     print(f"  Supply:Demand ratio: {N_supply_demand:.4f}")
 
                 # Update nutrient stress for all species
+                # Clamp once before loop, matching Fortran intent(inout) side-effect
+                # where sf=min(sf,1.0) on first call persists for all subsequent species
+                N_supply_demand = min(N_supply_demand, 1.0)
                 for i in range(num_species):
                     plot.nutrient[i] = site.species[i].poor_soil_rsp(N_supply_demand)
                     if hasattr(self, '_debug_year0') and self._debug_year0 and i < 3:
@@ -540,9 +500,6 @@ class ForestModel:
                 # SECOND TREE LOOP: Final diameter increments and biomass
                 debug_first_tree2 = True  # Debug flag for first tree in loop 2
                 for it, tree in enumerate(plot.trees):
-                    if tree.mort_marker:
-                        continue
-
                     k = tree.species_index
                     tree.update_tree(site.species[k])  # Update tree with current species data
 
@@ -568,54 +525,43 @@ class ForestModel:
                         print(f"  Mortality check: fc_n <= 0.05? {fc_n:.6f} <= 0.05? {fc_n <= growth_thresh}")
                         print(f"  DIES: {dt <= pp or fc_n <= growth_thresh}")
                         debug_first_tree2 = False
-                    
-                    # DEBUG: Show growth calculation for first few trees
-                    # if hasattr(self, '_debug_growth_calc') and self._debug_growth_calc < 3:
-                    #     print(f"DEBUG growth: fc_n={fc_n:.4f}, diam_max={tree.diam_max:.4f}, dt={dt:.4f}, pp={pp:.4f}, dt<=pp={dt<=pp}, fc_n<=thresh={fc_n<=growth_thresh}")
-                    #     self._debug_growth_calc += 1
-                    # elif not hasattr(self, '_debug_growth_calc'):
-                    #     self._debug_growth_calc = 1
-                    #     print(f"DEBUG growth: fc_n={fc_n:.4f}, diam_max={tree.diam_max:.4f}, dt={dt:.4f}, pp={pp:.4f}, dt<=pp={dt<=pp}, fc_n<=thresh={fc_n<=growth_thresh}")
-                    
+
                     if dt <= pp or fc_n <= growth_thresh:
                         tree.mort_marker = True
                     else:
                         tree.mort_marker = False
-                    
-                    if not tree.mort_marker:
-                        # Final height and shape calculations
-                        tree.forska_height()
-                        tree.stem_shape()
-                        tree.leaf_biomass_c()
-                        leafbm = tree.leaf_bm
-                        
-                        tree.biomass_c()
-                        tree.biomass_n()
-                        
-                        # Calculate delta biomass and accumulate
-                        d_bioC = tree.biomC - biom_C[it]
-                        net_prim_prodC += d_bioC
-                        N_used += d_bioC / STEM_C_N
-                        
-                        if tree.conifer:
-                            prim_prod = leaf_b * leafbm - bleaf[it]
-                            net_prim_prodC += prim_prod
-                            N_used += prim_prod / CON_LEAF_C_N
-                            
-                            biomc += tree.biomC + leafbm
-                            biomn += tree.biomN + leafbm / CON_LEAF_C_N
-                        else:
-                            net_prim_prodC += leafbm
-                            N_used += leafbm / DEC_LEAF_C_N
-                            
-                            biomc += tree.biomC
-                            biomn += tree.biomN
+
+                    # Compute height, shape, biomass and accumulate for ALL trees
+                    # (matching Fortran: no mort_marker guard)
+                    tree.forska_height()
+                    tree.stem_shape()
+                    tree.leaf_biomass_c()
+                    leafbm = tree.leaf_bm
+
+                    tree.biomass_c()
+                    tree.biomass_n()
+
+                    # Calculate delta biomass and accumulate
+                    d_bioC = tree.biomC - biom_C[it]
+                    net_prim_prodC += d_bioC
+                    N_used += d_bioC / STEM_C_N
+
+                    if tree.conifer:
+                        prim_prod = leaf_b * leafbm - bleaf[it]
+                        net_prim_prodC += prim_prod
+                        N_used += prim_prod / CON_LEAF_C_N
+
+                        biomc += tree.biomC + leafbm
+                        biomn += tree.biomN + leafbm / CON_LEAF_C_N
+                    else:
+                        net_prim_prodC += leafbm
+                        N_used += leafbm / DEC_LEAF_C_N
+
+                        biomc += tree.biomC
+                        biomn += tree.biomN
                 
                 # THIRD TREE LOOP: Canopy height and litter fall
                 for it, tree in enumerate(plot.trees):
-                    if tree.mort_marker:
-                        continue
-                        
                     k = tree.species_index
                     tree.update_tree(site.species[k])  # Update tree with current species data
                     forht[it] = tree.forska_ht
@@ -626,9 +572,9 @@ class ForestModel:
                     
                     if check <= growth_thresh:
                         khc[it] += 1
-                        if khc[it] < int(forht[it]):
-                            # Increment canopy height
-                            tree.canopy_ht = float(khc[it]) + 0.01
+                        if khc[it] + 1 < int(forht[it]):
+                            # Increment canopy height (khc is 0-based, convert back to height)
+                            tree.canopy_ht = float(khc[it] + 1) + 0.01
                             
                             tree.stem_shape()
                             bct = tree.biomC  # Save old biomass
@@ -751,16 +697,23 @@ class ForestModel:
 
             else:
                 # NO PLOT-LEVEL DISTURBANCE - Individual tree mortality
-                plot.fire = 0
-                plot.wind = 0
                 surviving_trees = []
+
+                if plot.numtrees > 0:
+                    # Only reset fire/wind inside numtrees>0 guard (Fortran Model.f90:706-709)
+                    plot.fire = 0
+                    plot.wind = 0
 
                 for tree in plot.trees:
                     k = tree.species_index
                     tree.update_tree(site.species[k])
                     
                     # Check individual tree survival
-                    if tree.growth_survival() and tree.age_survival():
+                    # Evaluate both functions to match Fortran (no short-circuit);
+                    # both consume a random number that must be drawn every year.
+                    surv_growth = tree.growth_survival()
+                    surv_age = tree.age_survival()
+                    if surv_growth and surv_age:
                         # TREE SURVIVES
                         surviving_trees.append(tree)
                         
@@ -848,14 +801,19 @@ class ForestModel:
                     regrowth = np.zeros(num_species)
                     growmax = 0.0
 
-                    for i, species in enumerate(plot.species):
+                    for i in range(num_species):
+                        # Use site.species for climate response factors (fc_degday etc.)
+                        # which are updated by update_species_climate_responses().
+                        # plot.species are deep copies that don't get these updates.
+                        # This matches Fortran which has a single site%species array.
+                        species = site.species[i]
                         grow_cap = (species.fc_degday * species.fc_drought *
                                     species.fc_flood * plot.nutrient[i])
 
                         if species.conifer:
-                            light_factor = species.light_rsp(plot.con_light[1])
+                            light_factor = species.light_rsp(plot.con_light[0])
                         else:
-                            light_factor = species.light_rsp(plot.dec_light[1])
+                            light_factor = species.light_rsp(plot.dec_light[0])
 
                         regrowth[i] = grow_cap * light_factor
                         growmax = max(growmax, regrowth[i])
@@ -873,7 +831,8 @@ class ForestModel:
                     # Seedbank/seedling pipeline differs on first vs subsequent cycles
                     if plot.seedling_number == 0.0:
                         # First recruitment cycle
-                        for i, species in enumerate(plot.species):
+                        for i in range(num_species):
+                            species = site.species[i]
                             plot.seedbank[i] += (
                                 species.invader +
                                 species.seed_num * plot.avail_spec[i] +
@@ -910,7 +869,8 @@ class ForestModel:
                             prob[i] = plot.seedling[i] * regrowth[i]
                             probsum += prob[i]
 
-                        for i, species in enumerate(plot.species):
+                        for i in range(num_species):
+                            species = site.species[i]
                             plot.seedbank[i] += (
                                 species.invader +
                                 species.seed_num * plot.avail_spec[i] +
@@ -939,7 +899,8 @@ class ForestModel:
                 else:
                     # Post-disturbance (numtrees == 0 AND recent disturbance)
                     if plot.fire == 1 or plot.wind == 1:
-                        for i, species in enumerate(plot.species):
+                        for i in range(num_species):
+                            species = site.species[i]
                             grow_cap = (species.fc_degday * species.fc_drought *
                                         species.fc_flood)
 

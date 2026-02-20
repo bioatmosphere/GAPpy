@@ -54,19 +54,43 @@ class TreeData(SpeciesData):
             self.species_index = 0
     
     def copy_species_data(self, species):
-        """Copy species data to tree."""
-        # Copy all species attributes
-        for attr in dir(species):
-            if not attr.startswith('_') and hasattr(self, attr):
-                setattr(self, attr, getattr(species, attr))
-        
-        # Debug: Ensure environmental factors are copied
-        if hasattr(species, 'fc_degday'):
-            self.fc_degday = species.fc_degday
-        if hasattr(species, 'fc_drought'):
-            self.fc_drought = species.fc_drought  
-        if hasattr(species, 'fc_flood'):
-            self.fc_flood = species.fc_flood
+        """Copy species data fields to tree (Fortran: self%SpeciesData = tree_species)."""
+        self.genus_name = species.genus_name
+        self.taxonomic_name = species.taxonomic_name
+        self.unique_id = species.unique_id
+        self.common_name = species.common_name
+        self.genus_id = species.genus_id
+        self.species_id = species.species_id
+        self.shade_tol = species.shade_tol
+        self.lownutr_tol = species.lownutr_tol
+        self.stress_tol = species.stress_tol
+        self.age_tol = species.age_tol
+        self.drought_tol = species.drought_tol
+        self.flood_tol = species.flood_tol
+        self.fire_tol = species.fire_tol
+        self.max_age = species.max_age
+        self.max_diam = species.max_diam
+        self.max_ht = species.max_ht
+        self.wood_bulk_dens = species.wood_bulk_dens
+        self.rootdepth = species.rootdepth
+        self.leafdiam_a = species.leafdiam_a
+        self.leafarea_c = species.leafarea_c
+        self.deg_day_min = species.deg_day_min
+        self.deg_day_opt = species.deg_day_opt
+        self.deg_day_max = species.deg_day_max
+        self.seed_surv = species.seed_surv
+        self.seedling_lg = species.seedling_lg
+        self.invader = species.invader
+        self.seed_num = species.seed_num
+        self.sprout_num = species.sprout_num
+        self.arfa_0 = species.arfa_0
+        self.g = species.g
+        self.fc_fire = species.fc_fire
+        self.fc_wind = species.fc_wind
+        self.fc_degday = species.fc_degday
+        self.fc_drought = species.fc_drought
+        self.fc_flood = species.fc_flood
+        self.conifer = species.conifer
     
     def copy_tree(self, tree):
         """Copy tree data from another tree."""

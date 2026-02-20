@@ -3,15 +3,12 @@ Site module for GAPpy vegetation model.
 Translated from Site.f90
 """
 
+import copy
 import numpy as np
 from .constants import *
 from .species import SpeciesData
 from .soil import SoilData
-
-# Placeholder for missing functions
-def kron(x):
-    """Kronecker delta function placeholder"""
-    return 1.0 if x > 0 else 0.0
+from .utilities import kron
 
 
 class SiteData:
@@ -34,7 +31,7 @@ class SiteData:
         self.latitude = 0.0
         self.longitude = 0.0
         self.elevation = 0.0
-        self.altitude = 0.0
+        self.altitude = -999.0  # RNVALID sentinel: skip altitude adjustment unless explicitly set
         self.slope = 0.0
         self.leaf_area_ind = 0.0
         self.leaf_area_w0 = 0.0
@@ -89,9 +86,9 @@ class SiteData:
         self.precip_lapse_r = np.array(prcp_lapse)
         self.leaf_area_w0 = lai_w0
         self.leaf_area_ind = lai
-        # Convert fire/wind probabilities from per-1000-years to annual (like Fortran)
-        self.fire_prob = fire_prob / 1000.0
-        self.wind_prob = wind_prob / 1000.0
+        # Store raw values; division by 1000 happens in sitelist.py (Fortran Sitelist.f90:52-53)
+        self.fire_prob = fire_prob
+        self.wind_prob = wind_prob
         
         # Initialize soil properties
         self.soil.A_field_cap = Afc
@@ -137,11 +134,13 @@ class SiteData:
                 for species in species_data:
                     for range_id in range_species_ids:
                         if species.unique_id == range_id:
-                            self.species.append(species)
+                            self.species.append(copy.deepcopy(species))
                             break
         else:
             # No range list, all species in this site
-            self.species = list(species_data)
+            # Deep copy so each site has independent SpeciesData objects
+            # (Fortran copies element-by-element creating independent value copies)
+            self.species = copy.deepcopy(list(species_data))
         
         # Initialize plots based on species
         # This would need to be implemented based on Plot module
@@ -150,8 +149,7 @@ class SiteData:
     
     def adjust_for_altitude(self):
         """Adjust temperature and precipitation for altitude."""
-        # Placeholder for rnvalid - would need to be defined in parameters
-        rnvalid = -9999.0  # Common invalid value
+        rnvalid = -999.0  # Matches Fortran Parameters.f90:15 rnvalid=-999.0
         
         if self.altitude != rnvalid:
             tav = 0.0

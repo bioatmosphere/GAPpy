@@ -13,24 +13,24 @@ class Parameters:
     """Global parameters for GAPpy model."""
     
     def __init__(self):
-        # Basic parameters
-        self.numyears = 100
-        self.numplots = 1
-        self.maxtrees = 10000
-        self.maxheight = 50
-        
+        # Basic parameters (match Fortran Input.f90:63-66 defaults)
+        self.numyears = 1000
+        self.numplots = 200
+        self.maxtrees = 1000
+        self.maxheight = 60
+
         # Values for invalid/missing data
         self.rnvalid = -999.0
         self.invalid = -999
-        
+
         # Variables determining whether to use explicit seeds for RNGs
         self.fixed_seed = False
-        self.same_climate = False
+        self.same_climate = True  # Fortran Input.f90:57 default
         self.debug = False
-        
+
         # Spinup
         self.spinup = False
-        self.spinup_yrs = 50
+        self.spinup_yrs = 500  # Fortran Input.f90:48 default
         
         # Climate change variables
         self.incr_tmin_by = 0.0
@@ -42,9 +42,9 @@ class Parameters:
         self.tmin_change = 0.0
         self.tmax_change = 0.0
         self.precip_change = 0.0
-        self.begin_change_year = 0
+        self.begin_change_year = 300  # Fortran Input.f90:51 default
         self.start_gcm = 0
-        self.end_gcm = 0
+        self.end_gcm = 100  # Fortran Input.f90:61 default
         self.duration_of_change = 0
         self.incr_or_decr = "incr"
         self.year_print_interval = 10
@@ -60,12 +60,13 @@ class Parameters:
         self.rootdepth = 0.8  # meters (matches Fortran Input.f90 default)
         
         # Variables for changes to all site values
-        self.new_slope = 0.0
-        self.fire_level = 0.0
-        self.wind_level = 0.0
-        self.SA_field_cap = 0.0
-        self.A0_level_C = 0.0
-        self.A0_level_N = 0.0
+        # Default to rnvalid (-999.0) = "no override" (Fortran Input.f90:147-152)
+        self.new_slope = -999.0
+        self.fire_level = -999.0
+        self.wind_level = -999.0
+        self.SA_field_cap = -999.0
+        self.A0_level_C = -999.0
+        self.A0_level_N = -999.0
         
         # Counters
         self.clim_counter = 0

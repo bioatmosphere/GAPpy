@@ -10,9 +10,10 @@ from typing import List, Tuple, Optional
 
 def kron(x: float) -> float:
     """Kronecker delta function.
-    Returns 1.0 if x >= 0.0, else 0.0
+    Returns 1.0 if x > 0.0, else 0.0
+    Matches Fortran: if (x .gt. 0.0) kron=1.0; else kron=0.0
     """
-    return 1.0 if x >= 0.0 else 0.0
+    return 1.0 if x > 0.0 else 0.0
 
 
 def roundtoN(x: float, N: int) -> float:

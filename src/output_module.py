@@ -285,8 +285,8 @@ class OutputManager:
                     total_biomn[is_gen], plot_std_biomn[is_gen]
                 ])
             else:
-                # Fill with invalid values
-                row_data.extend([RNVALID] * 14)
+                # Fill with invalid values (15 data fields to match present case)
+                row_data.extend([RNVALID] * 15)
 
             csv_write(self.file_handles['biom_by_g'], row_data)
 
@@ -412,8 +412,8 @@ class OutputManager:
                     total_biomn[is_sp], plot_std_biomn[is_sp]
                 ])
             else:
-                # Fill with invalid values
-                row_data.extend([RNVALID] * 14)
+                # Fill with invalid values (15 data fields to match present case)
+                row_data.extend([RNVALID] * 15)
 
             csv_write(self.file_handles['biom_by_s'], row_data)
 
@@ -449,7 +449,8 @@ class OutputManager:
                         biomN[ip, is_sp], 0.0
                     ])
                 else:
-                    row_data.extend([RNVALID] * 14)
+                    # Fill with invalid values (15 data fields to match present case)
+                    row_data.extend([RNVALID] * 15)
 
                 csv_write(self.file_handles['pl_biom_by_s'], row_data)
 

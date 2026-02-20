@@ -71,6 +71,7 @@ class SoilData:
         Returns:
         - avail_N: available N for plant growth tn/ha
         - C_resp: emission to atmosphere as CO2 tc/ha/d
+        - aow0_scaled_by_max: clamped value (Fortran intent(out), propagates back)
         """
         
         # Copy from object to local variables
@@ -130,8 +131,9 @@ class SoilData:
         self.BL_c0 = sb_c0
         self.BL_n0 = sb_n0
         self.avail_N = avail_N
-        
-        return avail_N, C_resp
+
+        # Return clamped aow0_scaled_by_max to match Fortran intent(out) semantics
+        return avail_N, C_resp, aow0_scaled_by_max
 
     def soil_water(self, slope, lai, lai_w0, sigma, freeze, rain, pot_ev_day):
         """
@@ -146,13 +148,14 @@ class SoilData:
         - rain: daily precipitation cm/day
         - pot_ev_day: daily potential evapotranspiration cm/day
 
-        Returns (tuple of 10 values):
+        Returns (tuple of 11 values):
         - act_ev_day: daily actual evapotranspiration cm/day
         - laiw0_scaled_by_max, laiw0_scaled_by_min: canopy water scaling factors
         - aow0_scaled_by_max, aow0_scaled_by_min: A0 layer water scaling factors
         - sbw0_scaled_by_max, sbw0_scaled_by_min: base layer water scaling factors
         - saw0_scaled_by_fc, saw0_scaled_by_wp: A layer water scaling factors
         - lai_w0: updated canopy water content (must be persisted by caller!)
+        - lai: clamped leaf area index (Fortran intent(inout), propagates back)
         """
         
         # Copy from object to local variables
@@ -253,4 +256,5 @@ class SoilData:
         
         return (act_ev_day, laiw0_scaled_by_max, laiw0_scaled_by_min,
                 aow0_scaled_by_max, aow0_scaled_by_min, sbw0_scaled_by_max,
-                sbw0_scaled_by_min, saw0_scaled_by_fc, saw0_scaled_by_wp, lai_w0)
+                sbw0_scaled_by_min, saw0_scaled_by_fc, saw0_scaled_by_wp,
+                lai_w0, lai)

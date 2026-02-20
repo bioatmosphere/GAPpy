@@ -3,6 +3,7 @@ Plot module for GAPpy vegetation model.
 Translated from Plot.f90
 """
 
+import copy
 import math
 import numpy as np
 from typing import List, Dict, Tuple
@@ -38,6 +39,7 @@ class PlotData:
             raise ValueError("Must have a nonzero maximum height")
         
         # Initialize tree storage
+        self.maxtrees = maxtrees
         self.trees = []
         
         # Initialize height-based arrays
@@ -54,8 +56,9 @@ class PlotData:
         self.seedbank = np.zeros(self.numspecies)
         self.seedling = np.zeros(self.numspecies)
         
-        # Copy species list
-        self.species = species.copy()
+        # Deep copy species list so each plot has independent SpeciesData objects
+        # (Fortran copies element-by-element creating independent value copies)
+        self.species = copy.deepcopy(species)
         
         # Initialize counters and status
         self.numtrees = 0
@@ -72,7 +75,9 @@ class PlotData:
         self.nutrient = np.ones(self.numspecies)
     
     def add_tree(self, tree: TreeData) -> bool:
-        """Add a tree to the plot."""
+        """Add a tree to the plot. Returns False if plot is at capacity."""
+        if self.numtrees >= self.maxtrees:
+            return False
         self.trees.append(tree)
         self.numtrees = len(self.trees)
         return True
@@ -202,30 +207,6 @@ class PlotData:
             'max_diam': max_diam,
             'n_trees': n
         }
-    
-    def calculate_light_profile(self):
-        """Calculate light profile through canopy."""
-        # Reset light arrays
-        self.con_light.fill(0.0)
-        self.dec_light.fill(0.0)
-        
-        # Sort trees by height (tallest first)
-        sorted_trees = sorted(self.trees, key=lambda t: t.forska_ht, reverse=True)
-        
-        # Calculate light attenuation through canopy layers
-        available_light = 1.0  # Full sunlight at top
-        
-        for tree in sorted_trees:
-            height_idx = min(int(tree.forska_ht), len(self.con_light) - 1)
-            
-            if tree.conifer:
-                self.con_light[height_idx] = available_light
-                # Conifers attenuate light more
-                available_light *= 0.7
-            else:
-                self.dec_light[height_idx] = available_light
-                # Deciduous trees attenuate less
-                available_light *= 0.8
     
     def get_species_by_id(self, unique_id: str) -> SpeciesData:
         """Get species data by unique ID."""
