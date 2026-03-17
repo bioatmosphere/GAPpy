@@ -19,6 +19,7 @@ from .input_module import InputFileManager
 from .output_module import OutputManager
 from .sitelist import initialize_sitelist
 from .climate import set_site_climate
+from .dispersal import compute_distance_matrix, build_species_index_map, disperse_seeds
 
 
 class GAPpyModel:
@@ -136,9 +137,8 @@ class GAPpyModel:
                 plot.initialize_plot(site.species, self.parameters.maxtrees, self.parameters.maxheight)
                 site.plots.append(plot)
 
-            # NO initial trees - forest starts empty like Fortran
-            # Trees will establish through renewal/recruitment process
-            # self.forest_model.initialize_forest(site)  # REMOVED - not in Fortran
+            # No initial trees - forest starts empty like Fortran
+            # Trees establish through the renewal/recruitment process
     
     def initialize_output_files(self, species_present):
         """Initialize output files."""
@@ -181,55 +181,6 @@ class GAPpyModel:
         print(f"                 fire/1000   {site.fire_prob:.2f}   wind/1000 {site.wind_prob:.2f}")
         print(f"                 SAFC*rtdpth {site.soil.A_field_cap:.2f}   A0_C      {site.soil.A0_c0:.2f}  A0_N {site.soil.A0_n0:.2f}")
         
-    def bio_geo_climate(self, site, year):
-        """Biogeochemical climate processing."""
-        self.forest_model.bio_geo_climate(site, year)
-    
-    def write_soil_data(self, site, year):
-        """Write soil data."""
-        self.output_manager.write_soil_data(site, year)
-    
-    def write_site_data(self, site, year):
-        """Write site data."""
-        self.output_manager.write_site_data(site, year)
-    
-    def canopy(self, site):
-        """Process canopy dynamics."""
-        self.forest_model.canopy(site)
-    
-    def growth(self, site):
-        """Process tree growth."""
-        self.forest_model.growth(site)
-    
-    def mortality(self, site):
-        """Process tree mortality."""
-        self.forest_model.mortality(site)
-    
-    def renewal(self, site):
-        """Process tree renewal."""
-        self.forest_model.renewal(site)
-    
-    def write_genus_data(self, site, species_present, year):
-        """Write genus data."""
-        self.output_manager.write_genus_data(site, self.species_present, year)
-    
-    def write_species_data(self, site, species_present, year):
-        """Write species data."""
-        # Pass the Groups object which has the required numspecies and spec_names attributes
-        self.output_manager.write_species_data(site, self.species_present, year)
-    
-    def write_tree_data(self, site, year):
-        """Write tree data."""
-        self.output_manager.write_tree_data(site, year)
-    
-    def close_output_files(self):
-        """Close output files."""
-        self.output_manager.close_output_files()
-    
-    def set_site_rng_seed(self, fixed_seed):
-        """Set random number generator seed."""
-        self.forest_model.set_site_rng_seed(fixed_seed)
-    
     def run(self, filelist=""):
         """Main model execution loop."""
         
@@ -251,40 +202,45 @@ class GAPpyModel:
         
         # Start timing
         start_time = time.time()
-        
-        # Main site loop
-        for sndx, site in enumerate(self.sites):
-            
-            # Check if site exists
+
+        # Filter out invalid sites and prepare active site list
+        active_sites = []
+        for site in self.sites:
             if site.site_wmo == self.parameters.rnvalid:
                 print(f"             No site or climate file for site {site.site_id}")
                 print(f"             Skipping site {site.site_name}")
                 print()
                 continue
-            
-            # Load climate and site specific vars, then adjust for altitude
-            self.set_site_rng_seed(self.parameters.fixed_seed)
-            set_site_climate(self.parameters.same_climate, self.parameters.fixed_seed)
-            
-            # Skip this site if no species are present
             if len(site.species) == 0:
                 print(f"              No species present in site {site.site_id}")
                 print(f"              Skipping site {site.site_name}")
                 print()
                 continue
-            
+            active_sites.append(site)
+
+        # Initialize climate and RNG for each active site
+        for site in active_sites:
+            self.forest_model.set_site_rng_seed(self.parameters.fixed_seed)
+            set_site_climate(self.parameters.same_climate, self.parameters.fixed_seed)
             self.show_progress(site)
-            
-            # Run the model for this site
-            for year in range(self.parameters.numyears + 1):
+
+        # Pre-compute inter-site dispersal structures if enabled
+        use_dispersal = (self.parameters.seed_dispersal and len(active_sites) > 1)
+        if use_dispersal:
+            distance_matrix = compute_distance_matrix(active_sites)
+            species_index_maps = build_species_index_map(active_sites)
+            print(f"Seed dispersal enabled between {len(active_sites)} sites")
+
+        # Main simulation loop: all sites advance in lockstep
+        for year in range(self.parameters.numyears + 1):
+            for site in active_sites:
 
                 # Biogeochemical processes first
                 self.forest_model.bio_geo_climate(site, year)
 
                 # Write soil/CN/clim data after BioGeo but before tree dynamics
-                # (matches Fortran UVAFME.f90 lines 99-102)
-                self.write_soil_data(site, year)
-                self.write_site_data(site, year)
+                self.output_manager.write_soil_data(site, year)
+                self.output_manager.write_site_data(site, year)
 
                 # Tree dynamics
                 self.forest_model.canopy(site, year)
@@ -292,7 +248,7 @@ class GAPpyModel:
                 self.forest_model.mortality(site)
                 self.forest_model.renewal(site)
                 self.forest_model.update_site_statistics(site)
-                
+
                 # Determine print interval
                 if self.parameters.spinup:
                     if year < self.parameters.spinup_yrs:
@@ -301,32 +257,42 @@ class GAPpyModel:
                         print_interval = self.parameters.year_print_interval
                 else:
                     print_interval = self.parameters.year_print_interval
-                
+
                 # Write output data
                 if (year % print_interval == 0) or (year == self.parameters.numyears):
-                    self.write_genus_data(site, self.species_present, year)
-                    self.write_species_data(site, self.species_present, year)
+                    self.output_manager.write_genus_data(site, self.species_present, year)
+                    self.output_manager.write_species_data(site, self.species_present, year)
                     if self.parameters.tree_level_data:
-                        self.write_tree_data(site, year)
-                
+                        self.output_manager.write_tree_data(site, year)
+
                 # Progress indicator
                 if year % 10 == 0:
                     if site.plots:
                         total_live = sum(len(plot.get_live_trees()) for plot in site.plots)
                         total_dead = sum(len(plot.get_dead_trees()) for plot in site.plots)
                         stats = site.plots[0].get_statistics() if site.plots else {}
-                        print(f"  Year {year}: {total_live} live, {total_dead} dead, "
+                        print(f"  Site {site.site_id} Year {year}: {total_live} live, "
+                              f"{total_dead} dead, "
                               f"BiomC={stats.get('total_biomass_c', 0):.6f}")
                     else:
-                        print(f"  Year {year}: No plots")
-            
-            # Report timing
-            total_time = time.time()
-            print(f"Cumulative time: {total_time - start_time:.2f} seconds")
-            print("=" * 80)
-        
+                        print(f"  Site {site.site_id} Year {year}: No plots")
+
+            # Inter-site seed dispersal after all sites complete this year
+            if use_dispersal:
+                disperse_seeds(active_sites, distance_matrix, species_index_maps)
+
+            # Periodic timing update
+            if year % 100 == 0 and year > 0:
+                elapsed = time.time() - start_time
+                print(f"Year {year} complete. Elapsed: {elapsed:.2f}s")
+
+        # Report final timing
+        total_time = time.time() - start_time
+        print(f"Total simulation time: {total_time:.2f} seconds")
+        print("=" * 80)
+
         # Close output files
-        self.close_output_files()
+        self.output_manager.close_output_files()
 
 
 def main():

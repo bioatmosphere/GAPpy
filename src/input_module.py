@@ -475,7 +475,8 @@ class InputFileManager:
                         seed_surv=safe_get('NDE', 0.3, float),  # CSV col 'NDE' = seed_surv (Fortran Input.f90:696)
                         seedling_lg=safe_get('NDS', 0.8, float),  # CSV col 'NDS' = seedling_lg (Fortran Input.f90:697)
                         g=safe_get('g', 0.6, float),  # 'g' maps to g
-                        conifer=(safe_get('evergreen', 0, int) == 1)  # 'evergreen' maps to conifer
+                        conifer=(safe_get('evergreen', 0, int) == 1),  # 'evergreen' maps to conifer
+                        max_dispersal_dist=safe_get('max_dispersal_dist', 10.0, float)  # km, default 10 km
                     )
 
                     if self.parameters.debug and len(species_data) < 2:

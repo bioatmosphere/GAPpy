@@ -245,7 +245,7 @@ class PlotData:
     
     def remove_dead_trees(self):
         """Remove dead trees from plot."""
-        self.trees = [tree for tree in self.trees if not tree.mort_marker]
+        self.trees = self.get_live_trees()
         self.numtrees = len(self.trees)
     
     def get_statistics(self) -> Dict[str, float]:

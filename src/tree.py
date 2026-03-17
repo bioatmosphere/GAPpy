@@ -231,7 +231,6 @@ class TreeData(SpeciesData):
     
     def max_growth(self):
         """Calculate maximum growth potential."""
-        dc = self.diam_canht
         d = self.diam_bht
         h = self.forska_ht
         dm = self.max_diam
@@ -264,32 +263,6 @@ class TreeData(SpeciesData):
             diam_category[6] = 1
         
         return diam_category
-    
-    def calculate_all_metrics(self):
-        """Calculate all tree metrics in proper order."""
-        # Calculate height first
-        self.forska_height()
-
-        # Calculate stem shape
-        self.stem_shape()
-
-        # Calculate biomass components
-        self.biomass_c()
-        self.biomass_n()
-        self.leaf_biomass_c()
-
-        # Calculate growth potential
-        self.max_growth()
-
-    def is_alive(self):
-        """Check if tree is alive based on survival factors."""
-        if not self.age_survival():
-            return False
-        
-        if not self.growth_survival():
-            return False
-        
-        return True
     
     def __str__(self):
         """String representation of tree."""

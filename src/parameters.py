@@ -27,6 +27,7 @@ class Parameters:
         self.fixed_seed = False
         self.same_climate = True  # Fortran Input.f90:57 default
         self.debug = False
+        self.seed_dispersal = False  # Enable inter-site seed dispersal
 
         # Spinup
         self.spinup = False
@@ -112,6 +113,7 @@ class Parameters:
             'fixed_seed': self.fixed_seed,
             'same_climate': self.same_climate,
             'debug': self.debug,
+            'seed_dispersal': self.seed_dispersal,
             'spinup': self.spinup,
             'spinup_yrs': self.spinup_yrs,
             'incr_tmin_by': self.incr_tmin_by,

@@ -44,6 +44,7 @@ class SpeciesData:
         self.invader = 0.0
         self.seed_num = 0.0
         self.sprout_num = 0.0
+        self.max_dispersal_dist = 0.0  # Maximum seed dispersal distance in km
         self.arfa_0 = 0.0
         self.g = 0.0
         self.fc_fire = 0.0
@@ -55,12 +56,13 @@ class SpeciesData:
         # Boolean attributes
         self.conifer = False
     
-    def initialize_species(self, species_id, genus_name, taxonomic_name, unique_id, 
+    def initialize_species(self, species_id, genus_name, taxonomic_name, unique_id,
                           common_name, genus_id, shade_tol, lownutr_tol, stress_tol,
                           age_tol, drought_tol, flood_tol, fire_tol, max_age, max_diam,
                           max_ht, wood_bulk_dens, rootdepth, leafdiam_a, leafarea_c,
                           deg_day_min, deg_day_opt, deg_day_max, seedling_lg, invader,
-                          seed_num, sprout_num, seed_surv, arfa_0, g, conifer):
+                          seed_num, sprout_num, seed_surv, arfa_0, g, conifer,
+                          max_dispersal_dist=0.0):
         """Initialize species with all parameters."""
         
         ss = [1.1, 1.15, 1.2, 1.23, 1.25]
@@ -92,6 +94,7 @@ class SpeciesData:
         self.sprout_num = sprout_num
         self.seed_surv = seed_surv
         self.seedling_lg = seedling_lg
+        self.max_dispersal_dist = max_dispersal_dist
         self.arfa_0 = arfa_0
         
         # Adjustments
@@ -192,27 +195,6 @@ class SpeciesData:
         fpoor = max(0.0, min(1.0, fpoor))
 
         return fpoor * sf
-
-
-def poor_soil_rsp(sf, nrc):
-    """Compute quadratic nutrient response factors.
-
-    Args:
-        sf: soil fertility (supply:demand ratio, clamped to [0, 1])
-        nrc: nutrient response class (1=intolerant, 3=tolerant)
-    """
-    fert_c1 = [-0.6274, -0.2352, 0.2133]
-    fert_c2 = [3.600, 2.771, 1.789]
-    fert_c3 = [-1.994, -1.550, -1.014]
-
-    nrc = max(1, min(3, nrc))
-    nrc = 4 - nrc  # Invert tolerance class (Fortran Species.f90:235)
-    sf = min(sf, 1.0)
-
-    fpoor = fert_c1[nrc - 1] + fert_c2[nrc - 1] * sf + fert_c3[nrc - 1] * sf**2
-    fpoor = max(0.0, min(1.0, fpoor))
-
-    return fpoor * sf
 
 
 def fdry(dryday, k):

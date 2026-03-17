@@ -1014,28 +1014,6 @@ class ForestModel:
         site.soil.net_prim_prodN += N_used
         site.soil.new_growth = int(new_count * uconvert)
     
-    def initialize_forest(self, site: SiteData):
-        """Initialize forest with starting trees."""
-        for plot in site.plots:
-            # Add some initial trees of different species
-            for i, species in enumerate(plot.species):
-                # Number of initial trees (minimum 5 per species)
-                n_initial = max(1, int(2 * species.invader + 1))
-                
-                for _ in range(min(n_initial, params.maxtrees // len(plot.species))):
-                    tree = TreeData()
-                    tree.initialize_tree(species, i)
-                    
-                    # Initialize with random sizes
-                    tree.diam_bht = urand(5.0, 30.0)  # 5-30 cm DBH
-                    tree.calculate_all_metrics()
-                    
-                    plot.add_tree(tree)
-                    
-            if params.debug:
-                live_count = len([t for t in plot.trees if not t.mort_marker])
-                print(f"  Initialized plot with {len(plot.trees)} trees ({live_count} alive)")
-    
     def run_annual_cycle(self, site: SiteData, year: int):
         """Run complete annual cycle for a site."""
         # Biogeochemical processes
